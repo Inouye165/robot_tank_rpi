@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Robot Tank Controller</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  </head>
+  <body>
+    <main class="layout">
+      <section class="panel">
+        <h1>Robot Tank Controller</h1>
+        <p class="subtitle">Pi-side controller for line-based USB serial commands sent to the Arduino Uno R3.</p>
+        <div class="status-row">
+          <span class="status-label">Serial status</span>
+          <span id="serial-status" class="status-pill status-pending">Checking...</span>
+        </div>
+        <p id="serial-detail" class="status-detail">Waiting for controller status.</p>
+        <p id="serial-banner" class="status-detail">Waiting for Arduino startup banner.</p>
+      </section>
+
+      <section class="panel controls-panel">
+        <div class="drive-grid">
+          <button class="control large" data-command="forward">Forward</button>
+          <button class="control stop" data-command="stop">Stop</button>
+          <button class="control large" data-command="backward">Backward</button>
+        </div>
+
+        <div class="aux-grid">
+          <button class="control small secondary" data-command="ping">Ping</button>
+          <button class="control small secondary" data-command="ramp_test">Slow Ramp Test</button>
+        </div>
+
+        <p class="status-detail">Current Uno protocol supports `FORWARD speed duration_ms`, `BACKWARD speed duration_ms`, `STOP`, `PING`, and `RAMPTEST`. Turn and pan/tilt commands stay out of the UI until the firmware exposes them.</p>
+      </section>
+
+      <section class="panel">
+        <h2>Command Log</h2>
+        <p id="command-result" class="command-result">No command sent yet.</p>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>
