@@ -166,7 +166,11 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
 
     @app.get("/")
     def index():
-        return render_template("index.html", commands=COMMANDS)
+        return render_template(
+            "index.html",
+            commands=COMMANDS,
+            camera_stream_port=config.camera_stream_port,
+        )
 
     @app.get("/api/status")
     def status():

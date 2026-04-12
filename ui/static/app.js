@@ -2,6 +2,10 @@ const statusPill = document.getElementById('serial-status');
 const statusDetail = document.getElementById('serial-detail');
 const statusBanner = document.getElementById('serial-banner');
 const commandResult = document.getElementById('command-result');
+const cameraPanel = document.querySelector('[data-camera-stream-port]');
+const cameraStatus = document.getElementById('camera-status');
+const cameraStream = document.getElementById('camera-stream');
+const cameraPlaceholder = document.getElementById('camera-placeholder');
 const buttons = Array.from(document.querySelectorAll('[data-command]'));
 const speedRange = document.getElementById('speed-range');
 const speedValue = document.getElementById('speed-value');
@@ -15,6 +19,27 @@ const leftMotorValue = document.getElementById('left-motor-value');
 const rightMotorSpeed = document.getElementById('right-motor-speed');
 const rightMotorValue = document.getElementById('right-motor-value');
 const motorDurationInput = document.getElementById('motor-duration-ms');
+const cameraStreamPort = cameraPanel ? cameraPanel.dataset.cameraStreamPort : '8081';
+
+function buildCameraBaseUrl() {
+  return `${window.location.protocol}//${window.location.hostname}:${cameraStreamPort}`;
+}
+
+function showCameraUnavailable(message) {
+  cameraStatus.textContent = message;
+  cameraStream.classList.add('is-hidden');
+  cameraStream.removeAttribute('src');
+  cameraPlaceholder.classList.remove('is-hidden');
+}
+
+function showCameraAvailable(message) {
+  cameraStatus.textContent = message;
+  if (!cameraStream.getAttribute('src')) {
+    cameraStream.src = `${buildCameraBaseUrl()}/stream.mjpg`;
+  }
+  cameraStream.classList.remove('is-hidden');
+  cameraPlaceholder.classList.add('is-hidden');
+}
 
 function syncOutput(input, output) {
   output.textContent = input.value;
@@ -102,6 +127,20 @@ async function refreshStatus() {
   }
 }
 
+async function refreshCameraStatus() {
+  try {
+    const response = await fetch(`${buildCameraBaseUrl()}/status`);
+    const status = await response.json();
+    if (status.available) {
+      showCameraAvailable(status.message || 'Camera stream is live.');
+    } else {
+      showCameraUnavailable(status.message || 'Camera stream unavailable.');
+    }
+  } catch (error) {
+    showCameraUnavailable('Could not reach the camera streaming service.');
+  }
+}
+
 async function sendCommand(command, label) {
   buttons.forEach((button) => {
     button.disabled = true;
@@ -165,4 +204,6 @@ rightMotorSpeed.addEventListener('input', () => {
 });
 
 refreshStatus();
+refreshCameraStatus();
 window.setInterval(refreshStatus, 5000);
+window.setInterval(refreshCameraStatus, 5000);

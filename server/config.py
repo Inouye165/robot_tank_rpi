@@ -22,6 +22,7 @@ def _float_env(name: str, default: float) -> float:
 class Config:
     server_host: str = os.getenv("TANK_SERVER_HOST", "0.0.0.0")
     server_port: int = _int_env("TANK_SERVER_PORT", 5000)
+    camera_stream_port: int = _int_env("TANK_CAMERA_STREAM_PORT", 8081)
     serial_port: str = os.getenv("TANK_SERIAL_PORT", "/dev/ttyACM0")
     serial_baud: int = _int_env("TANK_SERIAL_BAUD", 115200)
     serial_write_timeout: float = _float_env("TANK_SERIAL_WRITE_TIMEOUT", 1.0)

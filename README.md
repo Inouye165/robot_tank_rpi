@@ -5,6 +5,7 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 ## V1 scope
 
 - Local Flask server bound to `0.0.0.0`
+- Separate camera streaming service for embedding a live camera view in the controller page
 - Browser UI with large motion controls for the commands the current Uno firmware actually supports
 - Drive speed control and camera pan/tilt controls that map directly to the Uno serial protocol
 - Independent left and right motor controls for motor-level testing and steering checks
@@ -52,6 +53,7 @@ The app reads configuration from environment variables.
 
 - `TANK_SERVER_HOST` default: `0.0.0.0`
 - `TANK_SERVER_PORT` default: `5000`
+- `TANK_CAMERA_STREAM_PORT` default: `8081`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
 - `TANK_SERIAL_WRITE_TIMEOUT` default: `1.0`
@@ -92,6 +94,8 @@ The Flask server listens on `0.0.0.0`, so open it from another device on the sam
 http://<pi-ip>:5000/
 ```
 
+The live camera stream is served separately on `http://<pi-ip>:8081/stream.mjpg` and is embedded into the main page automatically.
+
 Find the Pi IP with:
 
 ```bash
@@ -104,21 +108,34 @@ If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /
 
 This repo includes a small launcher script at `scripts/start_controller.sh` that auto-detects the first available Uno serial device from `/dev/ttyUSB*` or `/dev/ttyACM*` and then starts the Flask controller.
 
+The camera stream service uses system Python so it can access `picamera2` even though the main app runs inside the project virtualenv. Its launcher is `scripts/start_camera_stream.py` and its systemd unit is `scripts/robot-tank-camera.service`.
+
 The included systemd service file is `scripts/robot-tank-rpi.service`. To install and enable it on the Pi:
 
 ```bash
 sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-rpi.service /etc/systemd/system/robot-tank-rpi.service
+sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-camera.service /etc/systemd/system/robot-tank-camera.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now robot-tank-rpi.service
+sudo systemctl enable --now robot-tank-camera.service
 ```
 
 Useful service commands:
 
 ```bash
 sudo systemctl status robot-tank-rpi.service
+sudo systemctl status robot-tank-camera.service
 sudo journalctl -u robot-tank-rpi.service -n 100 --no-pager
+sudo journalctl -u robot-tank-camera.service -n 100 --no-pager
 sudo systemctl restart robot-tank-rpi.service
+sudo systemctl restart robot-tank-camera.service
 ```
+
+If the camera is connected but the stream panel still reports unavailable, check:
+
+- `sudo journalctl -u robot-tank-camera.service -n 100 --no-pager`
+- camera ribbon seating and power
+- that Picamera2 can see a device with `/usr/bin/python3 -c "from picamera2 import Picamera2; print(Picamera2.global_camera_info())"`
 
 When the Pi opens the serial port, the Arduino Uno resets. The controller waits about 2 seconds before sending commands, then reads the startup banner if available. A good first health check from the UI is `Ping`, which should return `PONG` when the firmware is ready.
 

@@ -8,6 +8,17 @@
   </head>
   <body>
     <main class="layout">
+      <section class="panel camera-panel" data-camera-stream-port="{{ camera_stream_port }}">
+        <div class="subpanel-head">
+          <h2>Camera Stream</h2>
+        </div>
+        <div class="camera-frame-wrap">
+          <img id="camera-stream" class="camera-stream is-hidden" alt="Robot tank camera stream">
+          <div id="camera-placeholder" class="camera-placeholder">Camera stream unavailable</div>
+        </div>
+        <p id="camera-status" class="status-detail">Checking camera service.</p>
+      </section>
+
       <section class="panel">
         <h1>Robot Tank Controller</h1>
         <p class="subtitle">Pi-side controller for line-based USB serial commands sent to the Arduino Uno R3.</p>
