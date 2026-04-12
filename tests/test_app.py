@@ -84,6 +84,22 @@ def test_command_endpoint_rejects_out_of_range_camera_value():
     assert service.commands == []
 
 
+def test_command_endpoint_surfaces_firmware_error_as_failure():
+    class ErrorSerialService(StubSerialService):
+        def send_command(self, command: str):
+            self.commands.append(command)
+            return type("Result", (), {"ok": False, "message": "ERR UNKNOWN COMMAND: SPEED", "response": "ERR UNKNOWN COMMAND: SPEED"})()
+
+    service = ErrorSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "set_speed", "speed": 20})
+
+    assert response.status_code == 503
+    assert response.get_json()["message"] == "ERR UNKNOWN COMMAND: SPEED"
+
+
 def test_command_endpoint_rejects_unknown_command():
     service = StubSerialService()
     app = create_app(serial_service=service)

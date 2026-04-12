@@ -77,6 +77,8 @@ class SerialService:
             self._last_error = None
 
             if response:
+                if response.upper().startswith("ERR"):
+                    return CommandResult(False, response, response=response)
                 return CommandResult(True, response, response=response)
 
             return CommandResult(True, f"Sent '{command}' to {self.port}")
