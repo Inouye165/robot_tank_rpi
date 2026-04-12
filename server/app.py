@@ -32,10 +32,32 @@ COMMANDS = {
         "label": "Set Camera",
         "type": "camera",
     },
+    "pan": {
+        "label": "Set Pan",
+        "type": "servo",
+        "verb": "PAN",
+        "field": "pan",
+    },
+    "tilt": {
+        "label": "Set Tilt",
+        "type": "servo",
+        "verb": "TILT",
+        "field": "tilt",
+    },
     "center_camera": {
         "label": "Center Camera",
         "type": "fixed",
         "command": "CENTERCAM",
+    },
+    "left_motor": {
+        "label": "Left Motor",
+        "type": "motor",
+        "side": "LEFT",
+    },
+    "right_motor": {
+        "label": "Right Motor",
+        "type": "motor",
+        "side": "RIGHT",
     },
     "firmware_status": {
         "label": "Read Status",
@@ -103,6 +125,25 @@ def build_serial_command(action: str, payload: dict[str, object], config: Config
         pan = _require_range(_coerce_int(payload.get("pan"), 90), 0, 180, "pan")
         tilt = _require_range(_coerce_int(payload.get("tilt"), 90), 0, 180, "tilt")
         return f"CAMERA {pan} {tilt}"
+
+    if command["type"] == "servo":
+        angle = _require_range(_coerce_int(payload.get(command["field"]), 90), 0, 180, command["field"])
+        return f"{command['verb']} {angle}"
+
+    if command["type"] == "motor":
+        speed = _require_range(
+            _coerce_int(payload.get("speed"), 0),
+            -255,
+            255,
+            "speed",
+        )
+        duration_ms = _require_range(
+            _coerce_int(payload.get("duration_ms"), config.default_drive_duration_ms),
+            0,
+            60000,
+            "duration_ms",
+        )
+        return f"MOTOR {command['side']} {speed} {duration_ms}"
 
     return None
 

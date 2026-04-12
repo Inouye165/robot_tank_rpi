@@ -69,11 +69,48 @@
             </label>
 
             <div class="aux-grid">
+              <button class="control small secondary" data-command="pan">Set Pan</button>
+              <button class="control small secondary" data-command="tilt">Set Tilt</button>
               <button class="control small secondary" data-command="camera">Set Camera</button>
               <button class="control small secondary" data-command="ramp_test">Slow Ramp Test</button>
             </div>
           </section>
         </div>
+
+        <section class="subpanel">
+          <div class="subpanel-head">
+            <h2>Independent Motors</h2>
+            <button class="control small stop" data-command="stop">Stop All</button>
+          </div>
+
+          <div class="motor-grid">
+            <label class="control-group" for="left-motor-speed">
+              <span>Left Motor Speed</span>
+              <div class="inline-control">
+                <input id="left-motor-speed" type="range" min="-255" max="255" step="1" value="0">
+                <output id="left-motor-value" for="left-motor-speed">0</output>
+              </div>
+            </label>
+
+            <label class="control-group" for="right-motor-speed">
+              <span>Right Motor Speed</span>
+              <div class="inline-control">
+                <input id="right-motor-speed" type="range" min="-255" max="255" step="1" value="0">
+                <output id="right-motor-value" for="right-motor-speed">0</output>
+              </div>
+            </label>
+          </div>
+
+          <label class="control-group" for="motor-duration-ms">
+            <span>Motor Duration (ms)</span>
+            <input id="motor-duration-ms" type="number" min="0" max="60000" step="50" value="400">
+          </label>
+
+          <div class="aux-grid">
+            <button class="control small secondary" data-command="left_motor">Run Left Motor</button>
+            <button class="control small secondary" data-command="right_motor">Run Right Motor</button>
+          </div>
+        </section>
 
         <div class="drive-grid">
           <button class="control large" data-command="forward">Forward</button>
@@ -81,7 +118,7 @@
           <button class="control large" data-command="backward">Backward</button>
         </div>
 
-        <p class="status-detail">The UI now targets the current Uno protocol directly: `SPEED`, `FORWARD`, `BACKWARD`, `STOP`, `PING`, `STATUS`, `CAMERA`, `CENTERCAM`, and `RAMPTEST`.</p>
+        <p class="status-detail">The UI now targets the current Uno protocol directly: `SPEED`, `FORWARD`, `BACKWARD`, `MOTOR LEFT`, `MOTOR RIGHT`, `STOP`, `PING`, `STATUS`, `PAN`, `TILT`, `CAMERA`, `CENTERCAM`, and `RAMPTEST`.</p>
       </section>
 
       <section class="panel">

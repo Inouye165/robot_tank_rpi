@@ -11,6 +11,8 @@ Current command set:
 - `STOP`
 - `HELP`
 - `STATUS`
+- `MOTOR LEFT <signed_speed> <duration_ms>`
+- `MOTOR RIGHT <signed_speed> <duration_ms>`
 - `PAN <0-180>`
 - `TILT <0-180>`
 - `CAMERA <pan> <tilt>`

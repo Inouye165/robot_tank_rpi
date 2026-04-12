@@ -62,6 +62,50 @@ def test_command_endpoint_sets_camera():
     assert service.commands == ["CAMERA 120 75"]
 
 
+def test_command_endpoint_sets_pan():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "pan", "pan": 100})
+
+    assert response.status_code == 200
+    assert service.commands == ["PAN 100"]
+
+
+def test_command_endpoint_sets_tilt():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "tilt", "tilt": 60})
+
+    assert response.status_code == 200
+    assert service.commands == ["TILT 60"]
+
+
+def test_command_endpoint_runs_left_motor():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "left_motor", "speed": -40, "duration_ms": 500})
+
+    assert response.status_code == 200
+    assert service.commands == ["MOTOR LEFT -40 500"]
+
+
+def test_command_endpoint_runs_right_motor():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "right_motor", "speed": 55, "duration_ms": 250})
+
+    assert response.status_code == 200
+    assert service.commands == ["MOTOR RIGHT 55 250"]
+
+
 def test_command_endpoint_sends_ramp_test_verbatim():
     service = StubSerialService()
     app = create_app(serial_service=service)
@@ -79,6 +123,17 @@ def test_command_endpoint_rejects_out_of_range_camera_value():
     client = app.test_client()
 
     response = client.post("/api/command", json={"command": "camera", "pan": 200, "tilt": 90})
+
+    assert response.status_code == 400
+    assert service.commands == []
+
+
+def test_command_endpoint_rejects_out_of_range_motor_value():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "left_motor", "speed": 300, "duration_ms": 500})
 
     assert response.status_code == 400
     assert service.commands == []

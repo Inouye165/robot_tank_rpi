@@ -7,6 +7,7 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 - Local Flask server bound to `0.0.0.0`
 - Browser UI with large motion controls for the commands the current Uno firmware actually supports
 - Drive speed control and camera pan/tilt controls that map directly to the Uno serial protocol
+- Independent left and right motor controls for motor-level testing and steering checks
 - Reusable serial service with safe handling when the Arduino is not connected
 - Serial-open warmup for Arduino auto-reset behavior
 - No camera streaming, auth, database, or Docker in this phase
@@ -17,7 +18,11 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 - `BACKWARD <speed> <duration_ms>` timed reverse pulse from the web UI
 - `SPEED <speed>` updates the Uno's default drive speed
 - `CAMERA <pan> <tilt>` sets both camera servos from the web UI
+- `PAN <angle>`
+- `TILT <angle>`
 - `CENTERCAM`
+- `MOTOR LEFT <signed_speed> <duration_ms>`
+- `MOTOR RIGHT <signed_speed> <duration_ms>`
 - `STATUS`
 - `STOP`
 - `PING`
@@ -29,7 +34,11 @@ Example commands sent by the Pi app:
 - `BACKWARD 50 400`
 - `SPEED 20`
 - `CAMERA 120 75`
+- `PAN 100`
+- `TILT 60`
 - `CENTERCAM`
+- `MOTOR LEFT -40 500`
+- `MOTOR RIGHT 55 250`
 - `STATUS`
 - `STOP`
 - `PING`
@@ -97,7 +106,8 @@ The web UI exposes:
 
 - a speed slider plus `Set Speed`
 - a move-duration input used for `Forward` and `Backward`
-- pan and tilt sliders plus `Set Camera`
+- pan and tilt sliders plus `Set Pan`, `Set Tilt`, and `Set Camera`
+- left and right motor sliders plus `Run Left Motor` and `Run Right Motor`
 - `Center Camera`, `Read Status`, `Ping`, and `Slow Ramp Test`
 
 ## Run tests

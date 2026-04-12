@@ -10,6 +10,11 @@ const panRange = document.getElementById('pan-range');
 const panValue = document.getElementById('pan-value');
 const tiltRange = document.getElementById('tilt-range');
 const tiltValue = document.getElementById('tilt-value');
+const leftMotorSpeed = document.getElementById('left-motor-speed');
+const leftMotorValue = document.getElementById('left-motor-value');
+const rightMotorSpeed = document.getElementById('right-motor-speed');
+const rightMotorValue = document.getElementById('right-motor-value');
+const motorDurationInput = document.getElementById('motor-duration-ms');
 
 function syncOutput(input, output) {
   output.textContent = input.value;
@@ -33,6 +38,32 @@ function readCommandPayload(command) {
     return {
       pan: Number(panRange.value),
       tilt: Number(tiltRange.value),
+    };
+  }
+
+  if (command === 'pan') {
+    return {
+      pan: Number(panRange.value),
+    };
+  }
+
+  if (command === 'tilt') {
+    return {
+      tilt: Number(tiltRange.value),
+    };
+  }
+
+  if (command === 'left_motor') {
+    return {
+      speed: Number(leftMotorSpeed.value),
+      duration_ms: Number(motorDurationInput.value),
+    };
+  }
+
+  if (command === 'right_motor') {
+    return {
+      speed: Number(rightMotorSpeed.value),
+      duration_ms: Number(motorDurationInput.value),
     };
   }
 
@@ -110,6 +141,8 @@ buttons.forEach((button) => {
 syncOutput(speedRange, speedValue);
 syncOutput(panRange, panValue);
 syncOutput(tiltRange, tiltValue);
+syncOutput(leftMotorSpeed, leftMotorValue);
+syncOutput(rightMotorSpeed, rightMotorValue);
 
 speedRange.addEventListener('input', () => {
   syncOutput(speedRange, speedValue);
@@ -121,6 +154,14 @@ panRange.addEventListener('input', () => {
 
 tiltRange.addEventListener('input', () => {
   syncOutput(tiltRange, tiltValue);
+});
+
+leftMotorSpeed.addEventListener('input', () => {
+  syncOutput(leftMotorSpeed, leftMotorValue);
+});
+
+rightMotorSpeed.addEventListener('input', () => {
+  syncOutput(rightMotorSpeed, rightMotorValue);
 });
 
 refreshStatus();
