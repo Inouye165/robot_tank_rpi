@@ -100,6 +100,26 @@ hostname -I
 
 If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null` and set `TANK_SERIAL_PORT` accordingly. On this Pi, the live verification used `/dev/ttyUSB0`.
 
+## Auto-start on boot
+
+This repo includes a small launcher script at `scripts/start_controller.sh` that auto-detects the first available Uno serial device from `/dev/ttyUSB*` or `/dev/ttyACM*` and then starts the Flask controller.
+
+The included systemd service file is `scripts/robot-tank-rpi.service`. To install and enable it on the Pi:
+
+```bash
+sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-rpi.service /etc/systemd/system/robot-tank-rpi.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now robot-tank-rpi.service
+```
+
+Useful service commands:
+
+```bash
+sudo systemctl status robot-tank-rpi.service
+sudo journalctl -u robot-tank-rpi.service -n 100 --no-pager
+sudo systemctl restart robot-tank-rpi.service
+```
+
 When the Pi opens the serial port, the Arduino Uno resets. The controller waits about 2 seconds before sending commands, then reads the startup banner if available. A good first health check from the UI is `Ping`, which should return `PONG` when the firmware is ready.
 
 The web UI exposes:
