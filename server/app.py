@@ -24,6 +24,24 @@ COMMANDS = {
         "type": "fixed",
         "command": "STOP",
     },
+    "set_speed": {
+        "label": "Set Speed",
+        "type": "speed",
+    },
+    "camera": {
+        "label": "Set Camera",
+        "type": "camera",
+    },
+    "center_camera": {
+        "label": "Center Camera",
+        "type": "fixed",
+        "command": "CENTERCAM",
+    },
+    "firmware_status": {
+        "label": "Read Status",
+        "type": "fixed",
+        "command": "STATUS",
+    },
     "ping": {
         "label": "Ping",
         "type": "fixed",
@@ -37,7 +55,19 @@ COMMANDS = {
 }
 
 
-def build_serial_command(action: str, config: Config) -> Optional[str]:
+def _coerce_int(value, fallback: int) -> int:
+    if value in (None, ""):
+        return fallback
+    return int(value)
+
+
+def _require_range(value: int, minimum: int, maximum: int, label: str) -> int:
+    if value < minimum or value > maximum:
+        raise ValueError(f"{label} must be between {minimum} and {maximum}")
+    return value
+
+
+def build_serial_command(action: str, payload: dict[str, object], config: Config) -> Optional[str]:
     command = COMMANDS.get(action)
     if command is None:
         return None
@@ -45,7 +75,36 @@ def build_serial_command(action: str, config: Config) -> Optional[str]:
     if command["type"] == "fixed":
         return command["command"]
 
-    return f"{command['verb']} {config.default_drive_speed} {config.default_drive_duration_ms}"
+    if command["type"] == "drive":
+        speed = _require_range(
+            _coerce_int(payload.get("speed"), config.default_drive_speed),
+            0,
+            255,
+            "speed",
+        )
+        duration_ms = _require_range(
+            _coerce_int(payload.get("duration_ms"), config.default_drive_duration_ms),
+            0,
+            60000,
+            "duration_ms",
+        )
+        return f"{command['verb']} {speed} {duration_ms}"
+
+    if command["type"] == "speed":
+        speed = _require_range(
+            _coerce_int(payload.get("speed"), config.default_drive_speed),
+            0,
+            255,
+            "speed",
+        )
+        return f"SPEED {speed}"
+
+    if command["type"] == "camera":
+        pan = _require_range(_coerce_int(payload.get("pan"), 90), 0, 180, "pan")
+        tilt = _require_range(_coerce_int(payload.get("tilt"), 90), 0, 180, "tilt")
+        return f"CAMERA {pan} {tilt}"
+
+    return None
 
 
 def create_app(serial_service: Optional[SerialService] = None) -> Flask:
@@ -77,7 +136,11 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
     def send_command():
         payload = request.get_json(silent=True) or {}
         action = payload.get("command")
-        serial_command = build_serial_command(action, config)
+        try:
+            serial_command = build_serial_command(action, payload, config)
+        except (TypeError, ValueError) as exc:
+            return jsonify({"ok": False, "message": str(exc)}), 400
+
         if serial_command is None:
             return jsonify({"ok": False, "message": "Unknown command"}), 400
 

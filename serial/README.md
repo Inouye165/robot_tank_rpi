@@ -5,10 +5,16 @@ The Raspberry Pi sends line-based ASCII commands over USB serial to the Arduino 
 Current command set:
 
 - `PING`
+- `SPEED <0-255>`
 - `FORWARD <speed> <duration_ms>`
 - `BACKWARD <speed> <duration_ms>`
 - `STOP`
 - `HELP`
+- `STATUS`
+- `PAN <0-180>`
+- `TILT <0-180>`
+- `CAMERA <pan> <tilt>`
+- `CENTERCAM`
 - `RAMPTEST`
 
 Protocol notes:

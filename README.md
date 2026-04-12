@@ -6,6 +6,7 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 
 - Local Flask server bound to `0.0.0.0`
 - Browser UI with large motion controls for the commands the current Uno firmware actually supports
+- Drive speed control and camera pan/tilt controls that map directly to the Uno serial protocol
 - Reusable serial service with safe handling when the Arduino is not connected
 - Serial-open warmup for Arduino auto-reset behavior
 - No camera streaming, auth, database, or Docker in this phase
@@ -14,6 +15,10 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 
 - `FORWARD <speed> <duration_ms>` timed forward pulse from the web UI
 - `BACKWARD <speed> <duration_ms>` timed reverse pulse from the web UI
+- `SPEED <speed>` updates the Uno's default drive speed
+- `CAMERA <pan> <tilt>` sets both camera servos from the web UI
+- `CENTERCAM`
+- `STATUS`
 - `STOP`
 - `PING`
 - `RAMPTEST`
@@ -22,6 +27,10 @@ Example commands sent by the Pi app:
 
 - `FORWARD 50 400`
 - `BACKWARD 50 400`
+- `SPEED 20`
+- `CAMERA 120 75`
+- `CENTERCAM`
+- `STATUS`
 - `STOP`
 - `PING`
 - `RAMPTEST`
@@ -84,6 +93,13 @@ If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /
 
 When the Pi opens the serial port, the Arduino Uno resets. The controller waits about 2 seconds before sending commands, then reads the startup banner if available. A good first health check from the UI is `Ping`, which should return `PONG` when the firmware is ready.
 
+The web UI exposes:
+
+- a speed slider plus `Set Speed`
+- a move-duration input used for `Forward` and `Backward`
+- pan and tilt sliders plus `Set Camera`
+- `Center Camera`, `Read Status`, `Ping`, and `Slow Ramp Test`
+
 ## Run tests
 
 ```bash
@@ -101,4 +117,4 @@ python3 -m pytest
 
 ## Firmware alignment note
 
-This Pi app intentionally does not send `LEFT`, `RIGHT`, pan, or tilt commands yet because the Uno protocol you described does not currently expose those commands. Add them to the Pi UI only after the firmware protocol supports them.
+This Pi app now targets the expanded firmware protocol with speed and camera controls. If you later expose turn helpers or single-motor steering in the UI, keep the Pi-side command strings aligned with the firmware's exact text commands.

@@ -20,18 +20,68 @@
       </section>
 
       <section class="panel controls-panel">
+        <div class="settings-grid">
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h2>Drive</h2>
+              <button class="control small secondary" data-command="firmware_status">Read Status</button>
+            </div>
+
+            <label class="control-group" for="speed-range">
+              <span>Speed</span>
+              <div class="inline-control">
+                <input id="speed-range" type="range" min="0" max="255" step="1" value="50">
+                <output id="speed-value" for="speed-range">50</output>
+              </div>
+            </label>
+
+            <label class="control-group" for="duration-ms">
+              <span>Move Duration (ms)</span>
+              <input id="duration-ms" type="number" min="0" max="60000" step="50" value="400">
+            </label>
+
+            <div class="aux-grid">
+              <button class="control small secondary" data-command="set_speed">Set Speed</button>
+              <button class="control small secondary" data-command="ping">Ping</button>
+            </div>
+          </section>
+
+          <section class="subpanel">
+            <div class="subpanel-head">
+              <h2>Camera</h2>
+              <button class="control small secondary" data-command="center_camera">Center Camera</button>
+            </div>
+
+            <label class="control-group" for="pan-range">
+              <span>Pan</span>
+              <div class="inline-control">
+                <input id="pan-range" type="range" min="0" max="180" step="1" value="90">
+                <output id="pan-value" for="pan-range">90</output>
+              </div>
+            </label>
+
+            <label class="control-group" for="tilt-range">
+              <span>Tilt</span>
+              <div class="inline-control">
+                <input id="tilt-range" type="range" min="0" max="180" step="1" value="90">
+                <output id="tilt-value" for="tilt-range">90</output>
+              </div>
+            </label>
+
+            <div class="aux-grid">
+              <button class="control small secondary" data-command="camera">Set Camera</button>
+              <button class="control small secondary" data-command="ramp_test">Slow Ramp Test</button>
+            </div>
+          </section>
+        </div>
+
         <div class="drive-grid">
           <button class="control large" data-command="forward">Forward</button>
           <button class="control stop" data-command="stop">Stop</button>
           <button class="control large" data-command="backward">Backward</button>
         </div>
 
-        <div class="aux-grid">
-          <button class="control small secondary" data-command="ping">Ping</button>
-          <button class="control small secondary" data-command="ramp_test">Slow Ramp Test</button>
-        </div>
-
-        <p class="status-detail">Current Uno protocol supports `FORWARD speed duration_ms`, `BACKWARD speed duration_ms`, `STOP`, `PING`, and `RAMPTEST`. Turn and pan/tilt commands stay out of the UI until the firmware exposes them.</p>
+        <p class="status-detail">The UI now targets the current Uno protocol directly: `SPEED`, `FORWARD`, `BACKWARD`, `STOP`, `PING`, `STATUS`, `CAMERA`, `CENTERCAM`, and `RAMPTEST`.</p>
       </section>
 
       <section class="panel">

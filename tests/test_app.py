@@ -34,10 +34,32 @@ def test_command_endpoint_forwards_valid_command():
     app = create_app(serial_service=service)
     client = app.test_client()
 
-    response = client.post("/api/command", json={"command": "forward"})
+    response = client.post("/api/command", json={"command": "forward", "speed": 80, "duration_ms": 900})
 
     assert response.status_code == 200
-    assert service.commands == ["FORWARD 50 400"]
+    assert service.commands == ["FORWARD 80 900"]
+
+
+def test_command_endpoint_sets_speed():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "set_speed", "speed": 35})
+
+    assert response.status_code == 200
+    assert service.commands == ["SPEED 35"]
+
+
+def test_command_endpoint_sets_camera():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "camera", "pan": 120, "tilt": 75})
+
+    assert response.status_code == 200
+    assert service.commands == ["CAMERA 120 75"]
 
 
 def test_command_endpoint_sends_ramp_test_verbatim():
@@ -49,6 +71,17 @@ def test_command_endpoint_sends_ramp_test_verbatim():
 
     assert response.status_code == 200
     assert service.commands == ["RAMPTEST"]
+
+
+def test_command_endpoint_rejects_out_of_range_camera_value():
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post("/api/command", json={"command": "camera", "pan": 200, "tilt": 90})
+
+    assert response.status_code == 400
+    assert service.commands == []
 
 
 def test_command_endpoint_rejects_unknown_command():

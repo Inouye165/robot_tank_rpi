@@ -3,6 +3,41 @@ const statusDetail = document.getElementById('serial-detail');
 const statusBanner = document.getElementById('serial-banner');
 const commandResult = document.getElementById('command-result');
 const buttons = Array.from(document.querySelectorAll('[data-command]'));
+const speedRange = document.getElementById('speed-range');
+const speedValue = document.getElementById('speed-value');
+const durationInput = document.getElementById('duration-ms');
+const panRange = document.getElementById('pan-range');
+const panValue = document.getElementById('pan-value');
+const tiltRange = document.getElementById('tilt-range');
+const tiltValue = document.getElementById('tilt-value');
+
+function syncOutput(input, output) {
+  output.textContent = input.value;
+}
+
+function readCommandPayload(command) {
+  if (command === 'forward' || command === 'backward') {
+    return {
+      speed: Number(speedRange.value),
+      duration_ms: Number(durationInput.value),
+    };
+  }
+
+  if (command === 'set_speed') {
+    return {
+      speed: Number(speedRange.value),
+    };
+  }
+
+  if (command === 'camera') {
+    return {
+      pan: Number(panRange.value),
+      tilt: Number(tiltRange.value),
+    };
+  }
+
+  return {};
+}
 
 function setStatus(status) {
   statusPill.className = 'status-pill';
@@ -42,12 +77,16 @@ async function sendCommand(command, label) {
   });
 
   try {
+    const requestBody = {
+      command,
+      ...readCommandPayload(command),
+    };
     const response = await fetch('/api/command', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ command }),
+      body: JSON.stringify(requestBody),
     });
     const payload = await response.json();
     const serialCommand = payload.serial_command ? ` [${payload.serial_command}]` : '';
@@ -66,6 +105,22 @@ buttons.forEach((button) => {
   button.addEventListener('click', () => {
     sendCommand(button.dataset.command, button.textContent.trim());
   });
+});
+
+syncOutput(speedRange, speedValue);
+syncOutput(panRange, panValue);
+syncOutput(tiltRange, tiltValue);
+
+speedRange.addEventListener('input', () => {
+  syncOutput(speedRange, speedValue);
+});
+
+panRange.addEventListener('input', () => {
+  syncOutput(panRange, panValue);
+});
+
+tiltRange.addEventListener('input', () => {
+  syncOutput(tiltRange, tiltValue);
 });
 
 refreshStatus();

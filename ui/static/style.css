@@ -94,6 +94,65 @@ p {
   gap: 1rem;
 }
 
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.subpanel {
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 1rem;
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.subpanel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.subpanel-head h2 {
+  margin-bottom: 0;
+}
+
+.control-group {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  font-weight: 700;
+}
+
+.control-group input[type="number"],
+.control-group input[type="range"] {
+  width: 100%;
+}
+
+.control-group input[type="number"] {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem;
+  font: inherit;
+  color: var(--text);
+  background: white;
+}
+
+.inline-control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.inline-control output {
+  min-width: 3ch;
+  text-align: right;
+  font-weight: 800;
+}
+
 .drive-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -155,6 +214,10 @@ p {
 @media (max-width: 640px) {
   .layout {
     width: min(100%, calc(100% - 1rem));
+  }
+
+  .settings-grid {
+    grid-template-columns: 1fr;
   }
 
   .drive-grid,
