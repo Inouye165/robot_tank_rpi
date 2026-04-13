@@ -4,7 +4,7 @@ from pathlib import Path
 import socket
 from typing import Optional
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .config import Config
 from .serial_service import SerialService
@@ -173,6 +173,10 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
             commands=COMMANDS,
             camera_stream_port=config.camera_stream_port,
         )
+
+    @app.get("/sw.js")
+    def service_worker():
+        return send_from_directory(app.static_folder, "sw.js", mimetype="application/javascript")
 
     @app.get("/api/status")
     def status():

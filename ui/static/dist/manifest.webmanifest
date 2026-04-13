@@ -1,0 +1,19 @@
+{
+  "name": "Robot Tank Cockpit",
+  "short_name": "Tank Cockpit",
+  "description": "Single-screen React cockpit for Raspberry Pi robot tank drive and camera control.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#08111d",
+  "theme_color": "#102033",
+  "icons": [
+    {
+      "src": "icon-tank.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,19 +1,16 @@
 :root {
   color-scheme: dark;
   --bg: #08111d;
-  --bg-alt: #102033;
   --panel: rgba(8, 20, 32, 0.84);
-  --panel-border: rgba(111, 198, 255, 0.14);
   --panel-strong: rgba(10, 26, 40, 0.92);
+  --panel-border: rgba(111, 198, 255, 0.14);
   --text: #edf5ff;
   --muted: #9bb3ca;
   --accent: #13b0a5;
-  --accent-strong: #0c7f7b;
-  --accent-glow: rgba(19, 176, 165, 0.35);
-  --warning: #f9b950;
-  --error: #f95f62;
   --ok: #66d17a;
   --pending: #6cc5ff;
+  --warning: #f9b950;
+  --error: #f95f62;
   --shadow: 0 24px 80px rgba(0, 0, 0, 0.42);
   --radius: 24px;
 }
@@ -22,13 +19,18 @@
   box-sizing: border-box;
 }
 
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 html {
   height: 100%;
 }
 
 body {
   margin: 0;
-  min-height: 100%;
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
   color: var(--text);
   background:
@@ -42,14 +44,18 @@ input {
   font: inherit;
 }
 
+img {
+  max-width: 100%;
+}
+
 h1,
 h2,
 p {
   margin-top: 0;
 }
 
-.cockpit {
-  min-height: 100vh;
+.app-shell {
+  min-height: 100svh;
   padding: 1rem;
 }
 
@@ -63,6 +69,10 @@ p {
 
 .panel-screen {
   padding: 1.1rem;
+}
+
+.panel-block {
+  min-height: 0;
 }
 
 .hero-bar,
@@ -111,15 +121,10 @@ h2 {
 
 .screen-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.45fr) minmax(360px, 0.95fr);
+  grid-template-columns: minmax(0, 1.45fr) minmax(380px, 0.95fr);
   gap: 1rem;
   margin-top: 1rem;
-  min-height: calc(100vh - 8.5rem);
-}
-
-.viewport,
-.command-deck {
-  min-height: 0;
+  min-height: calc(100svh - 8.8rem);
 }
 
 .viewport {
@@ -173,10 +178,6 @@ h2 {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   background: radial-gradient(circle at center, rgba(12, 28, 44, 0.5), rgba(2, 6, 10, 0.9));
-}
-
-.is-hidden {
-  display: none;
 }
 
 .detail-grid {
@@ -286,8 +287,7 @@ output {
   box-shadow: 0 16px 30px rgba(4, 16, 28, 0.5);
 }
 
-.control:active,
-.control.is-active {
+.control:active {
   transform: translateY(1px);
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18), 0 6px 18px rgba(4, 16, 28, 0.34);
 }
@@ -378,13 +378,14 @@ output {
   }
 
   .camera-frame-wrap {
-    min-height: 48vh;
+    min-height: 50svh;
   }
 }
 
 @media (max-width: 760px) {
-  .cockpit {
-    padding: 0.65rem;
+  .app-shell {
+    padding: 0.5rem;
+    min-height: 100svh;
   }
 
   .panel-screen,
@@ -410,6 +411,13 @@ output {
   }
 
   .camera-frame-wrap {
-    min-height: 38vh;
+    min-height: 40svh;
+  }
+}
+
+@media (display-mode: standalone) {
+  .app-shell {
+    padding-top: max(env(safe-area-inset-top), 0.5rem);
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
   }
 }

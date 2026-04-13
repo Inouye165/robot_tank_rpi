@@ -197,10 +197,10 @@ def test_status_page_contains_pwa_cockpit_markup():
     body = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert 'manifest.webmanifest' in body
-    assert 'Robot Tank Cockpit' in body
-    assert 'install-app' in body
-    assert 'Keyboard: W/S drive, A/D pivot, Space stop, arrows move camera, [ and ] adjust speed.' in body
+    assert 'dist/manifest.webmanifest' in body
+    assert 'id="root"' in body
+    assert 'window.__TANK_APP_CONFIG__' in body
+    assert 'dist/app.js' in body
 
 
 def test_status_endpoint_can_surface_startup_issues():
@@ -218,6 +218,16 @@ def test_status_endpoint_can_surface_startup_issues():
 
     assert response.status_code == 200
     assert payload["startup_issues"][0]["code"] == "server-port-in-use"
+
+
+def test_service_worker_route_is_available():
+    app = create_app(serial_service=StubSerialService())
+    client = app.test_client()
+
+    response = client.get("/sw.js")
+
+    assert response.status_code == 200
+    assert "CACHE_NAME" in response.get_data(as_text=True)
 
 
 def test_detect_port_conflict_reports_busy_port():
