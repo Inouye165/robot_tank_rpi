@@ -18,6 +18,7 @@ class CommandResult:
     ok: bool
     message: str
     response: Optional[str] = None
+    error_code: Optional[str] = None
 
 
 class SerialService:
@@ -36,6 +37,7 @@ class SerialService:
         self._serial_factory = serial_factory
         self._connection = None
         self._last_error: Optional[str] = None
+        self._last_error_code: Optional[str] = None
         self._last_response: Optional[str] = None
         self._startup_banner: Optional[str] = None
         self._lock = threading.Lock()
@@ -51,6 +53,7 @@ class SerialService:
             "port": self.port,
             "baud_rate": self.baud_rate,
             "error": self._last_error,
+            "error_code": self._last_error_code,
             "last_response": self._last_response,
             "startup_banner": self._startup_banner,
             "ready": connected,
@@ -61,16 +64,16 @@ class SerialService:
             connection = self._ensure_connection()
             if connection is None:
                 message = self._last_error or f"Serial device unavailable at {self.port}"
-                return CommandResult(False, message)
+                return CommandResult(False, message, error_code=self._last_error_code)
 
             try:
                 self._drain_pending_lines(connection)
                 connection.write(f"{command}\n".encode("utf-8"))
                 connection.flush()
             except Exception as exc:  # pragma: no cover - hardware dependent
-                self._last_error = str(exc)
+                self._set_error(self._classify_runtime_error(exc))
                 self._connection = None
-                return CommandResult(False, self._last_error)
+                return CommandResult(False, self._last_error, error_code=self._last_error_code)
 
             response = self._read_line(connection)
             self._last_response = response
@@ -78,7 +81,7 @@ class SerialService:
 
             if response:
                 if response.upper().startswith("ERR"):
-                    return CommandResult(False, response, response=response)
+                    return CommandResult(False, response, response=response, error_code="firmware-error")
                 return CommandResult(True, response, response=response)
 
             return CommandResult(True, f"Sent '{command}' to {self.port}")
@@ -90,7 +93,7 @@ class SerialService:
         factory = self._serial_factory
         if factory is None:
             if pyserial is None:
-                self._last_error = "pyserial is not installed"
+                self._set_error(("missing-dependency", "pyserial is not installed"))
                 return None
             factory = pyserial.Serial
 
@@ -104,11 +107,43 @@ class SerialService:
             self._clear_input_buffer(self._connection)
             time.sleep(self.ready_delay)
             self._startup_banner = self._read_line(self._connection)
+            self._clear_error()
         except (OSError, SerialException, ValueError) as exc:
-            self._last_error = str(exc)
+            self._set_error(self._classify_connection_error(exc))
             self._connection = None
 
         return self._connection
+
+    def _clear_error(self) -> None:
+        self._last_error = None
+        self._last_error_code = None
+
+    def _set_error(self, error: tuple[str, str]) -> None:
+        self._last_error_code, self._last_error = error
+
+    def _classify_connection_error(self, exc: Exception) -> tuple[str, str]:
+        text = str(exc)
+        lowered = text.lower()
+
+        if "no such file" in lowered or "could not open port" in lowered or "file not found" in lowered:
+            return ("serial-port-missing", f"Serial port {self.port} was not found. Check the USB cable and TANK_SERIAL_PORT.")
+        if "permission" in lowered or "access is denied" in lowered:
+            return ("serial-permission-denied", f"Permission denied opening {self.port}. Add the service user to the dialout group or fix device permissions.")
+        if "busy" in lowered or "resource temporarily unavailable" in lowered:
+            return ("serial-port-busy", f"Serial port {self.port} is already in use by another process.")
+
+        return ("serial-open-failed", f"Failed to open serial port {self.port}: {text}")
+
+    def _classify_runtime_error(self, exc: Exception) -> tuple[str, str]:
+        text = str(exc)
+        lowered = text.lower()
+
+        if "write timeout" in lowered:
+            return ("serial-write-timeout", f"Timed out writing to serial port {self.port}.")
+        if "device disconnected" in lowered or "input/output error" in lowered:
+            return ("serial-disconnected", f"Serial device on {self.port} disconnected while sending a command.")
+
+        return ("serial-command-failed", f"Serial command failed on {self.port}: {text}")
 
     def _clear_input_buffer(self, connection) -> None:
         reset_input_buffer = getattr(connection, "reset_input_buffer", None)

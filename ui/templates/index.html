@@ -3,138 +3,167 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#102033">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Robot Tank Controller</title>
+    <link rel="manifest" href="{{ url_for('static', filename='manifest.webmanifest') }}">
+    <link rel="icon" href="{{ url_for('static', filename='icon-tank.svg') }}" type="image/svg+xml">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   </head>
   <body>
-    <main class="layout">
-      <section class="panel camera-panel" data-camera-stream-port="{{ camera_stream_port }}">
-        <div class="subpanel-head">
-          <h2>Camera Stream</h2>
+    <main class="cockpit" data-camera-stream-port="{{ camera_stream_port }}">
+      <section class="hero panel panel-screen">
+        <div class="hero-bar">
+          <div>
+            <p class="eyebrow">PWA drone tank control</p>
+            <h1>Robot Tank Cockpit</h1>
+            <p class="subtitle">Camera, drive, turret, status, and command feedback stay on one screen.</p>
+          </div>
+          <div class="hero-actions">
+            <button id="install-app" class="control small ghost is-hidden" type="button">Install App</button>
+            <button class="control small stop" data-command="stop" type="button">Stop All</button>
+          </div>
         </div>
-        <div class="camera-frame-wrap">
-          <img id="camera-stream" class="camera-stream is-hidden" alt="Robot tank camera stream">
-          <div id="camera-placeholder" class="camera-placeholder">Camera stream unavailable</div>
-        </div>
-        <p id="camera-status" class="status-detail">Checking camera service.</p>
-      </section>
 
-      <section class="panel">
-        <h1>Robot Tank Controller</h1>
-        <p class="subtitle">Pi-side controller for line-based USB serial commands sent to the Arduino Uno R3.</p>
-        <div class="status-row">
-          <span class="status-label">Serial status</span>
-          <span id="serial-status" class="status-pill status-pending">Checking...</span>
-        </div>
-        <p id="serial-detail" class="status-detail">Waiting for controller status.</p>
-        <p id="serial-banner" class="status-detail">Waiting for Arduino startup banner.</p>
-      </section>
-
-      <section class="panel controls-panel">
-        <div class="settings-grid">
-          <section class="subpanel">
-            <div class="subpanel-head">
-              <h2>Drive</h2>
-              <button class="control small secondary" data-command="firmware_status">Read Status</button>
-            </div>
-
-            <label class="control-group" for="speed-range">
-              <span>Speed</span>
-              <div class="inline-control">
-                <input id="speed-range" type="range" min="0" max="255" step="1" value="50">
-                <output id="speed-value" for="speed-range">50</output>
+        <div class="screen-grid">
+          <section class="viewport">
+            <div class="camera-frame-wrap">
+              <img id="camera-stream" class="camera-stream is-hidden" alt="Robot tank camera stream">
+              <div class="camera-overlay">
+                <div class="status-stack status-stack-inline">
+                  <span id="serial-status" class="status-pill status-pending">Checking serial</span>
+                  <span id="camera-health" class="status-pill status-pending">Checking camera</span>
+                  <span id="app-health" class="status-pill status-pending">Checking app</span>
+                </div>
+                <div id="camera-placeholder" class="camera-placeholder">Camera stream unavailable</div>
               </div>
-            </label>
-
-            <label class="control-group" for="duration-ms">
-              <span>Move Duration (ms)</span>
-              <input id="duration-ms" type="number" min="0" max="60000" step="50" value="400">
-            </label>
-
-            <div class="aux-grid">
-              <button class="control small secondary" data-command="set_speed">Set Speed</button>
-              <button class="control small secondary" data-command="ping">Ping</button>
+            </div>
+            <div class="detail-grid">
+              <p id="serial-detail" class="status-detail">Waiting for controller status.</p>
+              <p id="camera-status" class="status-detail">Checking camera service.</p>
+              <p id="serial-banner" class="status-detail">Waiting for Arduino startup banner.</p>
+              <p id="startup-issues" class="status-detail">No startup issues reported.</p>
             </div>
           </section>
 
-          <section class="subpanel">
-            <div class="subpanel-head">
-              <h2>Camera</h2>
-              <button class="control small secondary" data-command="center_camera">Center Camera</button>
-            </div>
-
-            <label class="control-group" for="pan-range">
-              <span>Pan</span>
-              <div class="inline-control">
-                <input id="pan-range" type="range" min="0" max="180" step="1" value="90">
-                <output id="pan-value" for="pan-range">90</output>
+          <section class="command-deck">
+            <article class="subpanel drive-cluster">
+              <div class="subpanel-head compact">
+                <h2>Drive</h2>
+                <div class="mini-actions">
+                  <button class="control small secondary" data-command="set_speed" type="button">Set Speed</button>
+                  <button class="control small secondary" data-command="ping" type="button">Ping</button>
+                  <button class="control small secondary" data-command="firmware_status" type="button">Read Status</button>
+                </div>
               </div>
-            </label>
 
-            <label class="control-group" for="tilt-range">
-              <span>Tilt</span>
-              <div class="inline-control">
-                <input id="tilt-range" type="range" min="0" max="180" step="1" value="90">
-                <output id="tilt-value" for="tilt-range">90</output>
+              <div class="drive-pad">
+                <div class="pad-spacer"></div>
+                <button class="control pad-button" data-command="forward" type="button">Forward<br><span>W</span></button>
+                <div class="pad-spacer"></div>
+                <button class="control pivot-button secondary" data-key-action="pivot-left" type="button">Pivot Left<br><span>A</span></button>
+                <button class="control stop" data-command="stop" type="button">Stop<br><span>Space</span></button>
+                <button class="control pivot-button secondary" data-key-action="pivot-right" type="button">Pivot Right<br><span>D</span></button>
+                <div class="pad-spacer"></div>
+                <button class="control pad-button" data-command="backward" type="button">Reverse<br><span>S</span></button>
+                <div class="pad-spacer"></div>
               </div>
-            </label>
+            </article>
 
-            <div class="aux-grid">
-              <button class="control small secondary" data-command="pan">Set Pan</button>
-              <button class="control small secondary" data-command="tilt">Set Tilt</button>
-              <button class="control small secondary" data-command="camera">Set Camera</button>
-              <button class="control small secondary" data-command="ramp_test">Slow Ramp Test</button>
-            </div>
+            <article class="subpanel tuning-panel">
+              <h2>Live Tuning</h2>
+              <div class="slider-grid">
+                <label class="control-group" for="speed-range">
+                  <span>Speed</span>
+                  <div class="inline-control">
+                    <input id="speed-range" type="range" min="0" max="255" step="1" value="50">
+                    <output id="speed-value" for="speed-range">50</output>
+                  </div>
+                </label>
+
+                <label class="control-group" for="duration-ms">
+                  <span>Drive Pulse (ms)</span>
+                  <input id="duration-ms" type="number" min="0" max="60000" step="50" value="400">
+                </label>
+
+                <label class="control-group" for="motor-duration-ms">
+                  <span>Pivot Pulse (ms)</span>
+                  <input id="motor-duration-ms" type="number" min="0" max="60000" step="50" value="400">
+                </label>
+              </div>
+            </article>
+
+            <article class="subpanel camera-cluster">
+              <div class="subpanel-head compact">
+                <h2>Turret</h2>
+                <div class="mini-actions">
+                  <button class="control small secondary" data-command="center_camera" type="button">Center</button>
+                  <button class="control small secondary" data-command="camera" type="button">Set Camera</button>
+                </div>
+              </div>
+
+              <div class="slider-grid">
+                <label class="control-group" for="pan-range">
+                  <span>Pan</span>
+                  <div class="inline-control">
+                    <input id="pan-range" type="range" min="0" max="180" step="1" value="90">
+                    <output id="pan-value" for="pan-range">90</output>
+                  </div>
+                </label>
+
+                <label class="control-group" for="tilt-range">
+                  <span>Tilt</span>
+                  <div class="inline-control">
+                    <input id="tilt-range" type="range" min="0" max="180" step="1" value="90">
+                    <output id="tilt-value" for="tilt-range">90</output>
+                  </div>
+                </label>
+              </div>
+
+              <div class="aux-grid">
+                <button class="control small secondary" data-command="pan" type="button">Pan Left/Right<br><span>Arrow Left/Right</span></button>
+                <button class="control small secondary" data-command="tilt" type="button">Tilt Up/Down<br><span>Arrow Up/Down</span></button>
+                <button class="control small secondary" data-command="ramp_test" type="button">Ramp Test</button>
+              </div>
+            </article>
+
+            <article class="subpanel motor-cluster">
+              <div class="subpanel-head compact">
+                <h2>Motor Override</h2>
+              </div>
+              <div class="slider-grid two-up">
+                <label class="control-group" for="left-motor-speed">
+                  <span>Left Motor</span>
+                  <div class="inline-control">
+                    <input id="left-motor-speed" type="range" min="-255" max="255" step="1" value="0">
+                    <output id="left-motor-value" for="left-motor-speed">0</output>
+                  </div>
+                </label>
+
+                <label class="control-group" for="right-motor-speed">
+                  <span>Right Motor</span>
+                  <div class="inline-control">
+                    <input id="right-motor-speed" type="range" min="-255" max="255" step="1" value="0">
+                    <output id="right-motor-value" for="right-motor-speed">0</output>
+                  </div>
+                </label>
+              </div>
+              <div class="aux-grid">
+                <button class="control small secondary" data-command="left_motor" type="button">Run Left Motor</button>
+                <button class="control small secondary" data-command="right_motor" type="button">Run Right Motor</button>
+              </div>
+            </article>
+
+            <article class="subpanel telemetry-panel">
+              <div class="subpanel-head compact">
+                <h2>Mission Log</h2>
+              </div>
+              <p id="command-result" class="command-result">No command sent yet.</p>
+              <p class="status-detail keyboard-help">Keyboard: W/S drive, A/D pivot, Space stop, arrows move camera, [ and ] adjust speed.</p>
+            </article>
           </section>
         </div>
-
-        <section class="subpanel">
-          <div class="subpanel-head">
-            <h2>Independent Motors</h2>
-            <button class="control small stop" data-command="stop">Stop All</button>
-          </div>
-
-          <div class="motor-grid">
-            <label class="control-group" for="left-motor-speed">
-              <span>Left Motor Speed</span>
-              <div class="inline-control">
-                <input id="left-motor-speed" type="range" min="-255" max="255" step="1" value="0">
-                <output id="left-motor-value" for="left-motor-speed">0</output>
-              </div>
-            </label>
-
-            <label class="control-group" for="right-motor-speed">
-              <span>Right Motor Speed</span>
-              <div class="inline-control">
-                <input id="right-motor-speed" type="range" min="-255" max="255" step="1" value="0">
-                <output id="right-motor-value" for="right-motor-speed">0</output>
-              </div>
-            </label>
-          </div>
-
-          <label class="control-group" for="motor-duration-ms">
-            <span>Motor Duration (ms)</span>
-            <input id="motor-duration-ms" type="number" min="0" max="60000" step="50" value="400">
-          </label>
-
-          <div class="aux-grid">
-            <button class="control small secondary" data-command="left_motor">Run Left Motor</button>
-            <button class="control small secondary" data-command="right_motor">Run Right Motor</button>
-          </div>
-        </section>
-
-        <div class="drive-grid">
-          <button class="control large" data-command="forward">Forward</button>
-          <button class="control stop" data-command="stop">Stop</button>
-          <button class="control large" data-command="backward">Backward</button>
-        </div>
-
-        <p class="status-detail">The UI now targets the current Uno protocol directly: `SPEED`, `FORWARD`, `BACKWARD`, `MOTOR LEFT`, `MOTOR RIGHT`, `STOP`, `PING`, `STATUS`, `PAN`, `TILT`, `CAMERA`, `CENTERCAM`, and `RAMPTEST`.</p>
-      </section>
-
-      <section class="panel">
-        <h2>Command Log</h2>
-        <p id="command-result" class="command-result">No command sent yet.</p>
       </section>
     </main>
 

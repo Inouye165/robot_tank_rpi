@@ -1,9 +1,17 @@
+import socket
+
 from server.app import create_app
+from server.app import detect_port_conflict
 
 
 class StubSerialService:
     def __init__(self) -> None:
         self.commands = []
+        self.next_result = type(
+            "Result",
+            (),
+            {"ok": True, "message": "sent", "response": "sent", "error_code": None},
+        )()
 
     def status(self):
         return {
@@ -11,12 +19,18 @@ class StubSerialService:
             "port": "/dev/null",
             "baud_rate": 115200,
             "error": "device missing",
+            "error_code": "serial-port-missing",
+            "last_response": None,
+            "startup_banner": None,
             "ready": False,
         }
 
     def send_command(self, command: str):
         self.commands.append(command)
-        return type("Result", (), {"ok": True, "message": f"sent {command}", "response": f"sent {command}"})()
+        if self.next_result.ok:
+            self.next_result.message = f"sent {command}"
+            self.next_result.response = f"sent {command}"
+        return self.next_result
 
 
 def test_status_endpoint_returns_serial_state():
@@ -26,7 +40,10 @@ def test_status_endpoint_returns_serial_state():
     response = client.get("/api/status")
 
     assert response.status_code == 200
-    assert response.get_json()["connected"] is False
+    payload = response.get_json()
+    assert payload["connected"] is False
+    assert payload["error_code"] == "serial-port-missing"
+    assert payload["startup_issues"] == []
 
 
 def test_command_endpoint_forwards_valid_command():
@@ -140,12 +157,17 @@ def test_command_endpoint_rejects_out_of_range_motor_value():
 
 
 def test_command_endpoint_surfaces_firmware_error_as_failure():
-    class ErrorSerialService(StubSerialService):
-        def send_command(self, command: str):
-            self.commands.append(command)
-            return type("Result", (), {"ok": False, "message": "ERR UNKNOWN COMMAND: SPEED", "response": "ERR UNKNOWN COMMAND: SPEED"})()
-
-    service = ErrorSerialService()
+    service = StubSerialService()
+    service.next_result = type(
+        "Result",
+        (),
+        {
+            "ok": False,
+            "message": "ERR UNKNOWN COMMAND: SPEED",
+            "response": "ERR UNKNOWN COMMAND: SPEED",
+            "error_code": "firmware-error",
+        },
+    )()
     app = create_app(serial_service=service)
     client = app.test_client()
 
@@ -153,6 +175,7 @@ def test_command_endpoint_surfaces_firmware_error_as_failure():
 
     assert response.status_code == 503
     assert response.get_json()["message"] == "ERR UNKNOWN COMMAND: SPEED"
+    assert response.get_json()["error_code"] == "firmware-error"
 
 
 def test_command_endpoint_rejects_unknown_command():
@@ -164,3 +187,48 @@ def test_command_endpoint_rejects_unknown_command():
 
     assert response.status_code == 400
     assert service.commands == []
+
+
+def test_status_page_contains_pwa_cockpit_markup():
+    app = create_app(serial_service=StubSerialService())
+    client = app.test_client()
+
+    response = client.get("/")
+    body = response.get_data(as_text=True)
+
+    assert response.status_code == 200
+    assert 'manifest.webmanifest' in body
+    assert 'Robot Tank Cockpit' in body
+    assert 'install-app' in body
+    assert 'Keyboard: W/S drive, A/D pivot, Space stop, arrows move camera, [ and ] adjust speed.' in body
+
+
+def test_status_endpoint_can_surface_startup_issues():
+    app = create_app(serial_service=StubSerialService())
+    app.config["STARTUP_ISSUES"] = [
+        {
+            "code": "server-port-in-use",
+            "message": "Port 5000 is already in use. Stop the other service or set TANK_SERVER_PORT to a free port.",
+        }
+    ]
+    client = app.test_client()
+
+    response = client.get("/api/status")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["startup_issues"][0]["code"] == "server-port-in-use"
+
+
+def test_detect_port_conflict_reports_busy_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+
+        issue = detect_port_conflict("127.0.0.1", port)
+
+    assert issue == {
+        "code": "server-port-in-use",
+        "message": f"Port {port} is already in use. Stop the other service or set TANK_SERVER_PORT to a free port.",
+    }

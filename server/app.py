@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import socket
 from typing import Optional
 
 from flask import Flask, jsonify, render_template, request
@@ -163,6 +164,7 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
         write_timeout=config.serial_write_timeout,
         ready_delay=config.serial_ready_delay,
     )
+    app.config["STARTUP_ISSUES"] = []
 
     @app.get("/")
     def index():
@@ -175,7 +177,10 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
     @app.get("/api/status")
     def status():
         service = app.config["SERIAL_SERVICE"]
-        return jsonify(service.status())
+        payload = service.status()
+        payload["startup_issues"] = app.config["STARTUP_ISSUES"]
+        payload["camera_status_url"] = f"http://{config.server_host if config.server_host != '0.0.0.0' else '127.0.0.1'}:{config.camera_stream_port}/status"
+        return jsonify(payload)
 
     @app.post("/api/command")
     def send_command():
@@ -197,6 +202,7 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
                 "ok": result.ok,
                 "message": result.message,
                 "command": action,
+                "error_code": result.error_code,
                 "serial_command": serial_command,
             }
         ), status_code
@@ -204,7 +210,36 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
     return app
 
 
+def detect_startup_issues(config: Config) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+
+    port_issue = detect_port_conflict(config.server_host, config.server_port)
+    if port_issue is not None:
+        issues.append(port_issue)
+
+    return issues
+
+
+def detect_port_conflict(host: str, port: int) -> Optional[dict[str, str]]:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            return {
+                "code": "server-port-in-use",
+                "message": f"Port {port} is already in use. Stop the other service or set TANK_SERVER_PORT to a free port.",
+            }
+    return None
+
+
 if __name__ == "__main__":
     app = create_app()
     config = app.config["TANK_CONFIG"]
+    startup_issues = detect_startup_issues(config)
+    app.config["STARTUP_ISSUES"] = startup_issues
+    if startup_issues:
+        for issue in startup_issues:
+            print(f"startup-error [{issue['code']}]: {issue['message']}")
+        raise SystemExit(1)
     app.run(host=config.server_host, port=config.server_port)

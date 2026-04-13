@@ -7,9 +7,11 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 - Local Flask server bound to `0.0.0.0`
 - Separate camera streaming service for embedding a live camera view in the controller page
 - Browser UI with large motion controls for the commands the current Uno firmware actually supports
+- Single-screen PWA cockpit that keeps camera, telemetry, and controls visible together
 - Drive speed control and camera pan/tilt controls that map directly to the Uno serial protocol
 - Independent left and right motor controls for motor-level testing and steering checks
 - Reusable serial service with safe handling when the Arduino is not connected
+- Structured startup and serial error reporting for operator-facing diagnostics
 - Serial-open warmup for Arduino auto-reset behavior
 - No camera streaming, auth, database, or Docker in this phase
 
@@ -143,14 +145,17 @@ The web UI exposes:
 
 - a speed slider plus `Set Speed`
 - a move-duration input used for `Forward` and `Backward`
+- keyboard controls: `W`/`S` drive, `A`/`D` pivot, `Space` stop, arrows move the camera, `[`/`]` adjust the speed setpoint
 - pan and tilt sliders plus `Set Pan`, `Set Tilt`, and `Set Camera`
 - left and right motor sliders plus `Run Left Motor` and `Run Right Motor`
 - `Center Camera`, `Read Status`, `Ping`, and `Slow Ramp Test`
+- installable PWA metadata so the control screen can be launched in standalone mode from a phone or tablet
 
 ## Run tests
 
 ```bash
 source .venv/bin/activate
+ruff check .
 python3 -m pytest
 ```
 
