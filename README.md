@@ -80,15 +80,25 @@ Optional test dependencies:
 pip install -r requirements-dev.txt
 ```
 
+Frontend build dependencies:
+
+```bash
+sudo apt-get install -y nodejs npm
+npm install
+```
+
 ## Run
 
 ```bash
 source .venv/bin/activate
+npm run build
 export TANK_SERIAL_PORT=/dev/ttyACM0
 export TANK_SERIAL_BAUD=115200
 export TANK_SERVER_PORT=5000
 python3 -m server.app
 ```
+
+The Flask template serves the built React cockpit from `ui/static/dist`, so rebuild the frontend after React UI changes before restarting the controller service.
 
 The Flask server listens on `0.0.0.0`, so open it from another device on the same Wi-Fi with:
 
@@ -156,6 +166,7 @@ The web UI exposes:
 ```bash
 source .venv/bin/activate
 ruff check .
+npm run build
 python3 -m pytest
 ```
 
