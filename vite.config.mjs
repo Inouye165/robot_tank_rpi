@@ -6,6 +6,10 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react()],
   publicDir: resolve('ui/frontend/public'),
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
   build: {
     outDir: resolve('ui/static/dist'),
     emptyOutDir: true,

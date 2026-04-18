@@ -21,6 +21,7 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 - `BACKWARD <speed> <duration_ms>` timed reverse pulse from the web UI
 - `SPEED <speed>` updates the Uno's default drive speed
 - `CAMERA <pan> <tilt>` sets both camera servos from the web UI
+- `CAMERANOW <pan> <tilt>` jumps immediately for calibration/testing
 - `PAN <angle>`
 - `TILT <angle>`
 - `CENTERCAM`
@@ -37,6 +38,7 @@ Example commands sent by the Pi app:
 - `BACKWARD 50 400`
 - `SPEED 20`
 - `CAMERA 120 75`
+- `CAMERANOW 120 75`
 - `PAN 100`
 - `TILT 60`
 - `CENTERCAM`
@@ -156,9 +158,10 @@ The web UI exposes:
 - a speed slider plus `Set Speed`
 - a move-duration input used for `Forward` and `Backward`
 - keyboard controls: `W`/`S` drive, `A`/`D` pivot, `Space` stop, arrows move the camera, `[`/`]` adjust the speed setpoint
-- pan and tilt sliders plus `Set Pan`, `Set Tilt`, and `Set Camera`
+- pan and tilt sliders that send target-only `CAMERA <pan> <tilt>` commands with a light throttle while the R3 firmware smooths motion internally
+- click-to-center aiming on the live camera image that computes one new camera target per click
 - left and right motor sliders plus `Run Left Motor` and `Run Right Motor`
-- `Center Camera`, `Read Status`, `Ping`, and `Slow Ramp Test`
+- `Center Camera`, `Ping`, `Slow Ramp Test`, and a compact firmware status panel showing build plus current/target pan and tilt
 - installable PWA metadata so the control screen can be launched in standalone mode from a phone or tablet
 
 ## Run tests

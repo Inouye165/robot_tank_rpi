@@ -16,6 +16,7 @@ Current command set:
 - `PAN <0-180>`
 - `TILT <0-180>`
 - `CAMERA <pan> <tilt>`
+- `CAMERANOW <pan> <tilt>`
 - `CENTERCAM`
 - `RAMPTEST`
 
@@ -25,3 +26,4 @@ Protocol notes:
 - The Uno should print `ConquerorTank ready` on startup.
 - Commands are terminated with a newline.
 - `PING` should return `PONG` as a quick health check.
+- Camera smoothing now lives in the R3 firmware. The Pi/browser should send camera targets, not browser-generated servo ramps.
