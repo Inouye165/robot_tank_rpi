@@ -2,6 +2,7 @@ import socket
 
 from server.app import create_app
 from server.app import detect_port_conflict
+from server.config import Config
 
 
 class StubSerialService:
@@ -11,6 +12,27 @@ class StubSerialService:
             "Result",
             (),
             {"ok": True, "message": "sent", "response": "sent", "error_code": None},
+        )()
+        self.next_firmware_result = type(
+            "FirmwareResult",
+            (),
+            {
+                "ok": True,
+                "message": "Firmware status read successfully.",
+                "status": {
+                    "firmware_build": "Apr_18_2026_07:55:42",
+                    "firmware_build_display": "Apr 18 2026 07:55:42",
+                    "firmware_build_date": "Apr 18 2026",
+                    "firmware_build_time": "07:55:42",
+                    "speed": 50,
+                    "pan": 84,
+                    "target_pan": 120,
+                    "tilt": 90,
+                    "target_tilt": 100,
+                },
+                "response": "STATUS SPEED 50 PAN 84 TARGET_PAN 120 TILT 90 TARGET_TILT 100 BUILD Apr_18_2026_07:55:42",
+                "error_code": None,
+            },
         )()
 
     def status(self):
@@ -31,6 +53,27 @@ class StubSerialService:
             self.next_result.message = f"sent {command}"
             self.next_result.response = f"sent {command}"
         return self.next_result
+
+    def read_sensors(self):
+        return type(
+            "SensorResult",
+            (),
+            {
+                "ok": True,
+                "message": "Sensor snapshot read successfully.",
+                "sensors": {
+                    "line_left": 812,
+                    "line_middle": 790,
+                    "line_right": 805,
+                    "sonar_cm": 24,
+                },
+                "response": "SENSORS LINE 812 790 805 SONAR 24",
+                "error_code": None,
+            },
+        )()
+
+    def read_firmware_status(self):
+        return self.next_firmware_result
 
 
 def test_status_endpoint_returns_serial_state():
@@ -55,6 +98,65 @@ def test_command_endpoint_forwards_valid_command():
 
     assert response.status_code == 200
     assert service.commands == ["FORWARD 80 900"]
+
+
+def test_sensor_endpoint_returns_parsed_sensor_snapshot():
+    app = create_app(serial_service=StubSerialService())
+    client = app.test_client()
+
+    response = client.get("/api/sensors")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["line_left"] == 812
+    assert payload["line_middle"] == 790
+    assert payload["line_right"] == 805
+    assert payload["sonar_cm"] == 24
+
+
+def test_firmware_status_endpoint_returns_parsed_status_snapshot():
+    app = create_app(serial_service=StubSerialService())
+    client = app.test_client()
+
+    response = client.get("/api/firmware/status")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["ok"] is True
+    assert payload["firmware_build"] == "Apr_18_2026_07:55:42"
+    assert payload["firmware_build_display"] == "Apr 18 2026 07:55:42"
+    assert payload["firmware_build_date"] == "Apr 18 2026"
+    assert payload["firmware_build_time"] == "07:55:42"
+    assert payload["pan"] == 84
+    assert payload["target_pan"] == 120
+    assert payload["tilt"] == 90
+    assert payload["target_tilt"] == 100
+
+
+def test_firmware_status_endpoint_surfaces_unexpected_response():
+    service = StubSerialService()
+    service.next_firmware_result = type(
+        "FirmwareResult",
+        (),
+        {
+            "ok": False,
+            "message": "Unexpected response while reading firmware status: PONG",
+            "status": None,
+            "response": "PONG",
+            "error_code": "firmware-status-unexpected",
+        },
+    )()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.get("/api/firmware/status")
+    payload = response.get_json()
+
+    assert response.status_code == 503
+    assert payload["ok"] is False
+    assert payload["response"] == "PONG"
+    assert payload["error_code"] == "firmware-status-unexpected"
 
 
 def test_command_endpoint_sets_speed():
@@ -228,6 +330,31 @@ def test_service_worker_route_is_available():
 
     assert response.status_code == 200
     assert "CACHE_NAME" in response.get_data(as_text=True)
+
+
+def test_config_prefers_env_serial_port(monkeypatch):
+    monkeypatch.setenv("TANK_SERIAL_PORT", "/dev/ttyUSB9")
+
+    config = Config()
+
+    assert config.serial_port == "/dev/ttyUSB9"
+
+
+def test_config_auto_detects_usb_serial_port(monkeypatch):
+    monkeypatch.delenv("TANK_SERIAL_PORT", raising=False)
+
+    def fake_glob(pattern):
+        if pattern == "/dev/ttyACM*":
+            return []
+        if pattern == "/dev/ttyUSB*":
+            return ["/dev/ttyUSB0"]
+        return []
+
+    monkeypatch.setattr("server.config.glob", fake_glob)
+
+    config = Config()
+
+    assert config.serial_port == "/dev/ttyUSB0"
 
 
 def test_detect_port_conflict_reports_busy_port():

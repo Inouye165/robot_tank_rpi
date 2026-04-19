@@ -21,6 +21,116 @@ class CommandResult:
     error_code: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class SensorResult:
+    ok: bool
+    message: str
+    sensors: Optional[dict[str, int]] = None
+    response: Optional[str] = None
+    error_code: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class FirmwareStatusResult:
+    ok: bool
+    message: str
+    status: Optional[dict[str, object]] = None
+    response: Optional[str] = None
+    error_code: Optional[str] = None
+
+
+STATUS_FIELD_MAP = {
+    "BUILD": "firmware_build",
+    "FIRMWARE": "firmware_name",
+    "PAN": "pan",
+    "TARGET_PAN": "target_pan",
+    "CURRENT_PAN": "pan",
+    "TILT": "tilt",
+    "TARGET_TILT": "target_tilt",
+    "CURRENT_TILT": "tilt",
+    "SPEED": "speed",
+    "SONAR_US": "sonar_us",
+}
+
+STATUS_INT_FIELDS = {"pan", "target_pan", "tilt", "target_tilt", "speed", "sonar_us"}
+
+
+def parse_firmware_build(build: str) -> dict[str, str]:
+    normalized = build.replace("_", " ").strip()
+    metadata = {
+        "firmware_build": build,
+        "firmware_build_display": normalized,
+    }
+
+    parts = normalized.split()
+    if len(parts) >= 4:
+        metadata["firmware_build_date"] = " ".join(parts[:3])
+        metadata["firmware_build_time"] = parts[3]
+
+    return metadata
+
+
+def parse_sensor_response(response: str) -> dict[str, int]:
+    parts = response.strip().split()
+    if len(parts) != 7:
+        raise ValueError("Unexpected sensor payload length")
+
+    if parts[0].upper() != "SENSORS" or parts[1].upper() != "LINE" or parts[5].upper() != "SONAR":
+        raise ValueError("Unexpected sensor payload format")
+
+    return {
+        "line_left": int(parts[2]),
+        "line_middle": int(parts[3]),
+        "line_right": int(parts[4]),
+        "sonar_cm": int(parts[6]),
+    }
+
+
+def parse_status_response(response: str) -> dict[str, object]:
+    parts = response.strip().split()
+    if not parts or parts[0].upper() != "STATUS":
+        raise ValueError("Unexpected status payload format")
+
+    parsed: dict[str, object] = {}
+    index = 1
+    known_keys = set(STATUS_FIELD_MAP)
+
+    while index < len(parts):
+        key = parts[index].upper()
+        index += 1
+
+        if index >= len(parts):
+            break
+
+        target_field = STATUS_FIELD_MAP.get(key)
+        if target_field == "firmware_build":
+            value_tokens: list[str] = []
+            while index < len(parts) and parts[index].upper() not in known_keys:
+                value_tokens.append(parts[index])
+                index += 1
+            if not value_tokens:
+                value_tokens.append(parts[index])
+                index += 1
+            parsed.update(parse_firmware_build(" ".join(value_tokens)))
+            continue
+
+        value = parts[index]
+        index += 1
+
+        if target_field is None:
+            continue
+
+        if target_field in STATUS_INT_FIELDS:
+            try:
+                parsed[target_field] = int(value)
+            except ValueError:
+                continue
+        else:
+            parsed[target_field] = value
+
+    return parsed
+
+
 class SerialService:
     def __init__(
         self,
@@ -85,6 +195,113 @@ class SerialService:
                 return CommandResult(True, response, response=response)
 
             return CommandResult(True, f"Sent '{command}' to {self.port}")
+
+    def read_sensors(self) -> SensorResult:
+        with self._lock:
+            connection = self._ensure_connection()
+            if connection is None:
+                message = self._last_error or f"Serial device unavailable at {self.port}"
+                return SensorResult(False, message, error_code=self._last_error_code)
+
+            try:
+                self._drain_pending_lines(connection)
+                connection.write(b"SENSORS\n")
+                connection.flush()
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                self._set_error(self._classify_runtime_error(exc))
+                self._connection = None
+                return SensorResult(False, self._last_error, error_code=self._last_error_code)
+
+            last_response = None
+            for _ in range(4):
+                response = self._read_line(connection)
+                if not response:
+                    break
+
+                last_response = response
+                self._last_response = response
+                self._last_error = None
+
+                if response.upper().startswith("ERR"):
+                    return SensorResult(False, response, response=response, error_code="firmware-error")
+
+                if not response.upper().startswith("SENSORS "):
+                    continue
+
+                try:
+                    sensors = parse_sensor_response(response)
+                except ValueError:
+                    return SensorResult(
+                        False,
+                        f"Unexpected sensor response from firmware: {response}",
+                        response=response,
+                        error_code="sensor-parse-failed",
+                    )
+
+                return SensorResult(True, "Sensor snapshot read successfully.", sensors=sensors, response=response)
+
+            message = "No sensor response received from firmware."
+            if last_response is not None:
+                message = f"Unexpected response while reading sensors: {last_response}"
+
+            return SensorResult(False, message, response=last_response, error_code="sensor-read-failed")
+
+    def read_firmware_status(self) -> FirmwareStatusResult:
+        with self._lock:
+            connection = self._ensure_connection()
+            if connection is None:
+                message = self._last_error or f"Serial device unavailable at {self.port}"
+                return FirmwareStatusResult(False, message, error_code=self._last_error_code)
+
+            try:
+                self._drain_pending_lines(connection)
+                connection.write(b"STATUS\n")
+                connection.flush()
+            except Exception as exc:  # pragma: no cover - hardware dependent
+                self._set_error(self._classify_runtime_error(exc))
+                self._connection = None
+                return FirmwareStatusResult(False, self._last_error, error_code=self._last_error_code)
+
+            last_response = None
+            for _ in range(4):
+                response = self._read_line(connection)
+                if not response:
+                    break
+
+                last_response = response
+                self._last_response = response
+                self._last_error = None
+
+                if response.upper().startswith("ERR"):
+                    return FirmwareStatusResult(False, response, response=response, error_code="firmware-error")
+
+                if not response.upper().startswith("STATUS"):
+                    continue
+
+                try:
+                    status = parse_status_response(response)
+                except ValueError:
+                    return FirmwareStatusResult(
+                        False,
+                        f"Unexpected firmware status response: {response}",
+                        response=response,
+                        error_code="firmware-status-parse-failed",
+                    )
+
+                return FirmwareStatusResult(
+                    True,
+                    "Firmware status read successfully.",
+                    status=status,
+                    response=response,
+                )
+
+            message = "No firmware status response received from firmware."
+            error_code = "firmware-status-read-failed"
+            if last_response is not None:
+                message = f"Unexpected response while reading firmware status: {last_response}"
+                error_code = "firmware-status-unexpected"
+
+            return FirmwareStatusResult(False, message, response=last_response, error_code=error_code)
 
     def _ensure_connection(self):
         if self._connection is not None:

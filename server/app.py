@@ -33,6 +33,10 @@ COMMANDS = {
         "label": "Set Camera",
         "type": "camera",
     },
+    "camera_now": {
+        "label": "Jump Camera",
+        "type": "camera_now",
+    },
     "pan": {
         "label": "Set Pan",
         "type": "servo",
@@ -127,6 +131,11 @@ def build_serial_command(action: str, payload: dict[str, object], config: Config
         tilt = _require_range(_coerce_int(payload.get("tilt"), 90), 0, 180, "tilt")
         return f"CAMERA {pan} {tilt}"
 
+    if command["type"] == "camera_now":
+        pan = _require_range(_coerce_int(payload.get("pan"), 90), 0, 180, "pan")
+        tilt = _require_range(_coerce_int(payload.get("tilt"), 90), 0, 180, "tilt")
+        return f"CAMERANOW {pan} {tilt}"
+
     if command["type"] == "servo":
         angle = _require_range(_coerce_int(payload.get(command["field"]), 90), 0, 180, command["field"])
         return f"{command['verb']} {angle}"
@@ -185,6 +194,36 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
         payload["startup_issues"] = app.config["STARTUP_ISSUES"]
         payload["camera_status_url"] = f"http://{config.server_host if config.server_host != '0.0.0.0' else '127.0.0.1'}:{config.camera_stream_port}/status"
         return jsonify(payload)
+
+    @app.get("/api/sensors")
+    def sensors():
+        service = app.config["SERIAL_SERVICE"]
+        result = service.read_sensors()
+        status_code = 200 if result.ok else 503
+        payload = {
+            "ok": result.ok,
+            "message": result.message,
+            "error_code": result.error_code,
+            "response": result.response,
+        }
+        if result.sensors is not None:
+            payload.update(result.sensors)
+        return jsonify(payload), status_code
+
+    @app.get("/api/firmware/status")
+    def firmware_status():
+        service = app.config["SERIAL_SERVICE"]
+        result = service.read_firmware_status()
+        status_code = 200 if result.ok else 503
+        payload = {
+            "ok": result.ok,
+            "message": result.message,
+            "error_code": result.error_code,
+            "response": result.response,
+        }
+        if result.status is not None:
+            payload.update(result.status)
+        return jsonify(payload), status_code
 
     @app.post("/api/command")
     def send_command():
