@@ -1,4 +1,5 @@
 from server.serial_service import SerialService
+from server.serial_service import parse_firmware_build
 from server.serial_service import parse_status_response
 from server.serial_service import parse_sensor_response
 
@@ -94,6 +95,9 @@ def test_parse_status_response_extracts_camera_targets_and_build():
         "target_tilt": 100,
         "sonar_us": 2187,
         "firmware_build": "Apr_18_2026_07:55:42",
+        "firmware_build_display": "Apr 18 2026 07:55:42",
+        "firmware_build_date": "Apr 18 2026",
+        "firmware_build_time": "07:55:42",
     }
 
 
@@ -103,6 +107,20 @@ def test_parse_status_response_tolerates_missing_fields():
     assert status == {
         "pan": 91,
         "firmware_build": "Apr_18_2026_07:55:42",
+        "firmware_build_display": "Apr 18 2026 07:55:42",
+        "firmware_build_date": "Apr 18 2026",
+        "firmware_build_time": "07:55:42",
+    }
+
+
+def test_parse_firmware_build_splits_date_and_time():
+    status = parse_firmware_build("Apr_18_2026_07:55:42")
+
+    assert status == {
+        "firmware_build": "Apr_18_2026_07:55:42",
+        "firmware_build_display": "Apr 18 2026 07:55:42",
+        "firmware_build_date": "Apr 18 2026",
+        "firmware_build_time": "07:55:42",
     }
 
 
@@ -211,6 +229,9 @@ def test_read_firmware_status_reads_status_snapshot():
         "tilt": 90,
         "target_tilt": 100,
         "firmware_build": "Apr_18_2026_07:55:42",
+        "firmware_build_display": "Apr 18 2026 07:55:42",
+        "firmware_build_date": "Apr 18 2026",
+        "firmware_build_time": "07:55:42",
     }
 
 

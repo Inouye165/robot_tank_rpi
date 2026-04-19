@@ -50,6 +50,9 @@ const defaultFirmware = {
   error_code: null,
   response: null,
   firmware_build: null,
+  firmware_build_display: null,
+  firmware_build_date: null,
+  firmware_build_time: null,
   speed: null,
   pan: null,
   target_pan: null,
@@ -255,6 +258,9 @@ export default function App() {
         error_code: payload.error_code,
         response: payload.response,
         firmware_build: payload.firmware_build ?? null,
+        firmware_build_display: payload.firmware_build_display ?? null,
+        firmware_build_date: payload.firmware_build_date ?? null,
+        firmware_build_time: payload.firmware_build_time ?? null,
         speed: payload.speed ?? null,
         pan: payload.pan ?? null,
         target_pan: payload.target_pan ?? null,
@@ -675,6 +681,9 @@ export default function App() {
                 </div>
                 <div className="detail-grid firmware-grid">
                   <DetailCard>Build: {firmware.firmware_build || '--'}</DetailCard>
+                  <DetailCard>Built: {firmware.firmware_build_display || '--'}</DetailCard>
+                  <DetailCard>Date: {firmware.firmware_build_date || '--'}</DetailCard>
+                  <DetailCard>Time: {firmware.firmware_build_time || '--'}</DetailCard>
                   <DetailCard>Speed: {Number.isFinite(firmware.speed) ? firmware.speed : '--'}</DetailCard>
                   <DetailCard>Pan: {formatAxisStatus(firmware.pan, firmware.target_pan)}</DetailCard>
                   <DetailCard>Tilt: {formatAxisStatus(firmware.tilt, firmware.target_tilt)}</DetailCard>

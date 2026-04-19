@@ -51,6 +51,9 @@ function installFetchMock() {
         message: 'Firmware status read successfully.',
         response: 'STATUS SPEED 50 PAN 84 TARGET_PAN 120 TILT 90 TARGET_TILT 100 BUILD Apr_18_2026_07:55:42',
         firmware_build: 'Apr_18_2026_07:55:42',
+        firmware_build_display: 'Apr 18 2026 07:55:42',
+        firmware_build_date: 'Apr 18 2026',
+        firmware_build_time: '07:55:42',
         speed: 50,
         pan: 84,
         target_pan: 120,
@@ -178,5 +181,15 @@ describe('App camera controls', () => {
     const cameraCalls = commandCalls(calls);
     expect(cameraCalls).toHaveLength(1);
     expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 95, tilt: 90 });
+  });
+
+  it('shows firmware build stamp details in the panel', async () => {
+    installFetchMock();
+    render(<App />);
+
+    expect(await screen.findByText('Build: Apr_18_2026_07:55:42')).toBeTruthy();
+    expect(screen.getByText('Built: Apr 18 2026 07:55:42')).toBeTruthy();
+    expect(screen.getByText('Date: Apr 18 2026')).toBeTruthy();
+    expect(screen.getByText('Time: 07:55:42')).toBeTruthy();
   });
 });

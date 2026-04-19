@@ -55,6 +55,21 @@ STATUS_FIELD_MAP = {
 STATUS_INT_FIELDS = {"pan", "target_pan", "tilt", "target_tilt", "speed", "sonar_us"}
 
 
+def parse_firmware_build(build: str) -> dict[str, str]:
+    normalized = build.replace("_", " ").strip()
+    metadata = {
+        "firmware_build": build,
+        "firmware_build_display": normalized,
+    }
+
+    parts = normalized.split()
+    if len(parts) >= 4:
+        metadata["firmware_build_date"] = " ".join(parts[:3])
+        metadata["firmware_build_time"] = parts[3]
+
+    return metadata
+
+
 def parse_sensor_response(response: str) -> dict[str, int]:
     parts = response.strip().split()
     if len(parts) != 7:
@@ -96,7 +111,7 @@ def parse_status_response(response: str) -> dict[str, object]:
             if not value_tokens:
                 value_tokens.append(parts[index])
                 index += 1
-            parsed[target_field] = " ".join(value_tokens)
+            parsed.update(parse_firmware_build(" ".join(value_tokens)))
             continue
 
         value = parts[index]

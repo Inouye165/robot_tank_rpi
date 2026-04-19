@@ -21,6 +21,9 @@ class StubSerialService:
                 "message": "Firmware status read successfully.",
                 "status": {
                     "firmware_build": "Apr_18_2026_07:55:42",
+                    "firmware_build_display": "Apr 18 2026 07:55:42",
+                    "firmware_build_date": "Apr 18 2026",
+                    "firmware_build_time": "07:55:42",
                     "speed": 50,
                     "pan": 84,
                     "target_pan": 120,
@@ -122,6 +125,9 @@ def test_firmware_status_endpoint_returns_parsed_status_snapshot():
     assert response.status_code == 200
     assert payload["ok"] is True
     assert payload["firmware_build"] == "Apr_18_2026_07:55:42"
+    assert payload["firmware_build_display"] == "Apr 18 2026 07:55:42"
+    assert payload["firmware_build_date"] == "Apr 18 2026"
+    assert payload["firmware_build_time"] == "07:55:42"
     assert payload["pan"] == 84
     assert payload["target_pan"] == 120
     assert payload["tilt"] == 90
