@@ -37,6 +37,7 @@ class Config:
     server_host: str = field(default_factory=lambda: os.getenv("TANK_SERVER_HOST", "0.0.0.0"))
     server_port: int = field(default_factory=lambda: _int_env("TANK_SERVER_PORT", 5000))
     camera_stream_port: int = field(default_factory=lambda: _int_env("TANK_CAMERA_STREAM_PORT", 8081))
+    secondary_camera_stream_port: int = field(default_factory=lambda: _int_env("TANK_SECONDARY_CAMERA_STREAM_PORT", 8082))
     serial_port: str = field(default_factory=_default_serial_port)
     serial_baud: int = field(default_factory=lambda: _int_env("TANK_SERIAL_BAUD", 115200))
     serial_write_timeout: float = field(default_factory=lambda: _float_env("TANK_SERIAL_WRITE_TIMEOUT", 1.0))

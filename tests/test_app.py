@@ -302,6 +302,7 @@ def test_status_page_contains_pwa_cockpit_markup():
     assert 'dist/manifest.webmanifest' in body
     assert 'id="root"' in body
     assert 'window.__TANK_APP_CONFIG__' in body
+    assert 'secondaryCameraStreamPort' in body
     assert 'dist/app.js' in body
 
 

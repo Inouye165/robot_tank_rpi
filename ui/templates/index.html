@@ -16,6 +16,7 @@
     <script>
       window.__TANK_APP_CONFIG__ = {
         cameraStreamPort: {{ camera_stream_port|tojson }},
+        secondaryCameraStreamPort: {{ secondary_camera_stream_port|tojson }},
       };
     </script>
     <script type="module" src="{{ url_for('static', filename='dist/app.js') }}"></script>

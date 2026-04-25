@@ -71,21 +71,24 @@ const cameraButtons = [
 ];
 
 const CAMERA_TARGET_THROTTLE_MS = 90;
-const CAMERA_HFOV_DEG = 62;
-const CAMERA_VFOV_DEG = 48;
-const CAMERA_NATIVE_ASPECT = 4 / 3;
+const CAMERA_HFOV_DEG = 114;
+const CAMERA_VFOV_DEG = 81;
+const CAMERA_NATIVE_ASPECT = 16 / 9;
 const CAMERA_NUDGE_DEG = 5;
+const DRIVE_HOLD_MIN_PULSE_MS = 80;
+const DRIVE_HOLD_MIN_REPEAT_MS = 50;
+const DRIVE_HOLD_MAX_REPEAT_MS = 250;
 const FIRMWARE_STATUS_POLL_MS = 20000;
 
 // Click-to-center is calibrated in software because exact centering depends on camera FOV,
-// object-fit crop, servo direction, backlash, and mount geometry on the physical tank.
+// letterboxing, servo direction, backlash, and mount geometry on the physical tank.
 const PAN_CLICK_SIGN = -1;
 const TILT_CLICK_SIGN = -1;
 const PAN_CLICK_GAIN = 1;
 const TILT_CLICK_GAIN = 1;
 
 function getAppConfig() {
-  return window.__TANK_APP_CONFIG__ || { cameraStreamPort: 8081 };
+  return window.__TANK_APP_CONFIG__ || { cameraStreamPort: 8081, secondaryCameraStreamPort: 8082 };
 }
 
 function describeError(payload) {
@@ -167,6 +170,7 @@ export default function App() {
   const [rightMotor, setRightMotor] = useState(0);
   const [status, setStatus] = useState(defaultStatus);
   const [camera, setCamera] = useState(defaultCamera);
+  const [secondaryCamera, setSecondaryCamera] = useState(defaultCamera);
   const [sensors, setSensors] = useState(defaultSensors);
   const [firmware, setFirmware] = useState(defaultFirmware);
   const [serverOnline, setServerOnline] = useState(true);
@@ -175,6 +179,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [flipped, setFlipped] = useState(true);
   const activeKeysRef = useRef(new Set());
+  const driveConfigRef = useRef({ speed: 50, duration: 400 });
+  const driveHoldRef = useRef({ command: null, timerId: null, inFlight: false });
   const queueRef = useRef(Promise.resolve());
   const cameraTargetRef = useRef({ pan: 90, tilt: 90 });
   const cameraPendingRef = useRef(null);
@@ -186,6 +192,10 @@ export default function App() {
     () => `${window.location.protocol}//${window.location.hostname}:${appConfig.cameraStreamPort}`,
     [appConfig.cameraStreamPort]
   );
+  const secondaryCameraBaseUrl = useMemo(
+    () => `${window.location.protocol}//${window.location.hostname}:${appConfig.secondaryCameraStreamPort}`,
+    [appConfig.secondaryCameraStreamPort]
+  );
 
   const serialIndicator = statusLevel(status);
   const cameraIndicator = cameraLevel(camera);
@@ -196,6 +206,7 @@ export default function App() {
     : describeError({ message: status.error || `No serial device available on ${status.port}.`, error_code: status.error_code });
 
   const cameraStreamUrl = `${cameraBaseUrl}/stream.mjpg`;
+  const secondaryCameraStreamUrl = `${secondaryCameraBaseUrl}/stream.mjpg`;
   const sensorDetail = sensors.available
     ? `Front sonar ${sensors.sonar_cm} cm. Bottom sensors L ${sensors.line_left}, M ${sensors.line_middle}, R ${sensors.line_right}.`
     : describeError({ message: sensors.message, error_code: sensors.error_code });
@@ -203,6 +214,13 @@ export default function App() {
   const firmwareDetail = firmware.ok
     ? 'R3-reported camera state.'
     : describeError({ message: firmware.message, error_code: firmware.error_code });
+
+  useEffect(() => {
+    driveConfigRef.current = {
+      speed: driveSpeed,
+      duration: driveDuration,
+    };
+  }, [driveDuration, driveSpeed]);
 
   async function refreshStatus() {
     try {
@@ -223,6 +241,16 @@ export default function App() {
       setCamera(payload);
     } catch {
       setCamera({ available: false, message: 'Could not reach the camera streaming service.' });
+    }
+  }
+
+  async function refreshSecondaryCameraStatus() {
+    try {
+      const response = await fetch(`${secondaryCameraBaseUrl}/status`);
+      const payload = await response.json();
+      setSecondaryCamera(payload);
+    } catch {
+      setSecondaryCamera({ available: false, message: 'Could not reach the secondary camera streaming service.' });
     }
   }
 
@@ -339,6 +367,78 @@ export default function App() {
     } catch {
       setCommandLog(`${label}: failed to reach the server.`);
     }
+  }
+
+  function clearDriveHoldTimer() {
+    if (driveHoldRef.current.timerId !== null) {
+      window.clearTimeout(driveHoldRef.current.timerId);
+      driveHoldRef.current.timerId = null;
+    }
+  }
+
+  function driveHoldPayload() {
+    return {
+      speed: driveConfigRef.current.speed,
+      duration_ms: Math.max(driveConfigRef.current.duration, DRIVE_HOLD_MIN_PULSE_MS),
+    };
+  }
+
+  function driveHoldRepeatDelay(durationMs) {
+    return clamp(Math.floor(durationMs * 0.6), DRIVE_HOLD_MIN_REPEAT_MS, DRIVE_HOLD_MAX_REPEAT_MS);
+  }
+
+  async function runDriveHoldPulse(command, label) {
+    if (driveHoldRef.current.command !== command || driveHoldRef.current.inFlight) {
+      return;
+    }
+
+    driveHoldRef.current.inFlight = true;
+    const payload = driveHoldPayload();
+
+    try {
+      const { response, payload: responsePayload } = await postCommand(command, payload);
+      const serialCommand = responsePayload.serial_command ? ` [${responsePayload.serial_command}]` : '';
+      setCommandLog(`${label}${serialCommand}: ${response.ok ? responsePayload.message : describeError(responsePayload)}`);
+    } catch {
+      setCommandLog(`${label}: failed to reach the server.`);
+    } finally {
+      driveHoldRef.current.inFlight = false;
+
+      if (driveHoldRef.current.command !== command) {
+        refreshStatus();
+        return;
+      }
+
+      clearDriveHoldTimer();
+      driveHoldRef.current.timerId = window.setTimeout(() => {
+        void runDriveHoldPulse(command, label);
+      }, driveHoldRepeatDelay(payload.duration_ms));
+    }
+  }
+
+  function startDriveHold(command, label) {
+    if (driveHoldRef.current.command === command) {
+      return;
+    }
+
+    clearDriveHoldTimer();
+    driveHoldRef.current.command = command;
+    void runDriveHoldPulse(command, label);
+  }
+
+  async function stopDriveHold(options = {}) {
+    const { sendStop = false, label = 'Drive Stop' } = options;
+    const activeCommand = driveHoldRef.current.command;
+
+    clearDriveHoldTimer();
+    driveHoldRef.current.command = null;
+
+    if (!sendStop || !activeCommand) {
+      return;
+    }
+
+    await sendDirectCommand('stop', label);
+    refreshStatus();
   }
 
   async function sendPivot(leftSpeed, rightSpeed, label) {
@@ -483,15 +583,18 @@ export default function App() {
   useEffect(() => {
     refreshStatus();
     refreshCameraStatus();
+    refreshSecondaryCameraStatus();
     refreshSensors();
     refreshFirmwareStatus();
     return () => {
+      clearDriveHoldTimer();
       clearPendingCameraSend();
     };
   }, []);
 
   useInterval(refreshStatus, 5000);
   useInterval(refreshCameraStatus, 5000);
+  useInterval(refreshSecondaryCameraStatus, 5000);
   useInterval(refreshSensors, 1500);
   useInterval(refreshFirmwareStatus, FIRMWARE_STATUS_POLL_MS);
 
@@ -524,10 +627,10 @@ export default function App() {
 
       if (key === 'w') {
         event.preventDefault();
-        sendCommand('forward', 'Keyboard Forward');
+        startDriveHold('forward', 'Keyboard Forward');
       } else if (key === 's') {
         event.preventDefault();
-        sendCommand('backward', 'Keyboard Reverse');
+        startDriveHold('backward', 'Keyboard Reverse');
       } else if (key === 'a') {
         event.preventDefault();
         sendPivot(-driveSpeed, driveSpeed, 'Keyboard Pivot Left');
@@ -567,16 +670,66 @@ export default function App() {
     }
 
     function onKeyUp(event) {
-      activeKeysRef.current.delete(event.key.toLowerCase());
+      const key = event.key.toLowerCase();
+      activeKeysRef.current.delete(key);
+
+      if (key === 'w' && driveHoldRef.current.command === 'forward') {
+        if (activeKeysRef.current.has('s')) {
+          startDriveHold('backward', 'Keyboard Reverse');
+          return;
+        }
+        void stopDriveHold({ sendStop: true, label: 'Keyboard Stop' });
+      }
+
+      if (key === 's' && driveHoldRef.current.command === 'backward') {
+        if (activeKeysRef.current.has('w')) {
+          startDriveHold('forward', 'Keyboard Forward');
+          return;
+        }
+        void stopDriveHold({ sendStop: true, label: 'Keyboard Stop' });
+      }
+    }
+
+    function onWindowBlur() {
+      activeKeysRef.current.clear();
+      void stopDriveHold({ sendStop: true, label: 'Keyboard Stop' });
     }
 
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onWindowBlur);
     return () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onWindowBlur);
     };
   }, [driveSpeed, motorDuration]);
+
+  function handleDriveButtonPress(event, command, label) {
+    event.preventDefault();
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Ignore capture failures from synthetic test events or unsupported pointers.
+      }
+    }
+    startDriveHold(command, label);
+  }
+
+  function handleDriveButtonRelease(event, command, label) {
+    if (typeof event.currentTarget.releasePointerCapture === 'function' && event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // Ignore release failures from synthetic test events or unsupported pointers.
+      }
+    }
+
+    if (driveHoldRef.current.command === command) {
+      void stopDriveHold({ sendStop: true, label });
+    }
+  }
 
   async function handleInstall() {
     if (!installPrompt) {
@@ -605,24 +758,42 @@ export default function App() {
         </div>
 
         <div className="screen-grid">
-          <section className="viewport panel-block">
-            <div className="camera-frame-wrap" onClick={handleVideoClick} style={{ cursor: camera.available ? 'crosshair' : 'default' }}>
-              {camera.available ? <img className="camera-stream" src={cameraStreamUrl} alt="Robot tank camera stream" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }} /> : null}
-              <div className="camera-overlay">
-                <div className="camera-hud-top">
-                  <div className="status-stack status-stack-inline">
-                    <StatusPill label={serialIndicator.label} tone={serialIndicator.tone} />
-                    <StatusPill label={cameraIndicator.label} tone={cameraIndicator.tone} />
-                    <StatusPill label={appIndicator.label} tone={appIndicator.tone} />
+          <section className="viewport-stack panel-block">
+            <section className="viewport viewport-primary">
+              <div className="camera-frame-wrap" onClick={handleVideoClick} style={{ cursor: camera.available ? 'crosshair' : 'default' }}>
+                {camera.available ? <img className="camera-stream" src={cameraStreamUrl} alt="Robot tank wide camera stream" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }} /> : null}
+                <div className="camera-overlay">
+                  <div className="camera-hud-top">
+                    <div className="status-stack status-stack-inline">
+                      <StatusPill label={serialIndicator.label} tone={serialIndicator.tone} />
+                      <StatusPill label={cameraIndicator.label} tone={cameraIndicator.tone} />
+                      <StatusPill label={appIndicator.label} tone={appIndicator.tone} />
+                    </div>
+                    <div className="camera-label-badge">Wide Cam</div>
                   </div>
+                  <div className="camera-detail-strip detail-grid detail-grid-overlay">
+                    <DetailCard>{serialDetail}</DetailCard>
+                    <DetailCard>{sensorDetail}</DetailCard>
+                  </div>
+                  {!camera.available ? <div className="camera-placeholder">{camera.message}</div> : null}
                 </div>
-                <div className="camera-detail-strip detail-grid detail-grid-overlay">
-                  <DetailCard>{serialDetail}</DetailCard>
-                  <DetailCard>{sensorDetail}</DetailCard>
-                </div>
-                {!camera.available ? <div className="camera-placeholder">{camera.message}</div> : null}
               </div>
-            </div>
+            </section>
+
+            <section className="viewport viewport-secondary">
+              <div className="camera-frame-wrap secondary-camera-wrap">
+                {secondaryCamera.available ? <img className="camera-stream" src={secondaryCameraStreamUrl} alt="Robot tank secondary camera stream" /> : null}
+                <div className="camera-overlay secondary-camera-overlay">
+                  <div className="camera-hud-top">
+                    <div className="status-stack status-stack-inline">
+                      <StatusPill label={secondaryCamera.available ? 'Aux camera live' : 'Aux camera offline'} tone={secondaryCamera.available ? 'ok' : 'error'} />
+                    </div>
+                    <div className="camera-label-badge">Aux Cam</div>
+                  </div>
+                  {!secondaryCamera.available ? <div className="camera-placeholder">{secondaryCamera.message}</div> : null}
+                </div>
+              </div>
+            </section>
           </section>
 
           <section className="command-deck">
@@ -630,13 +801,29 @@ export default function App() {
               <HeaderActions title="Drive" actions={commandButtons} disabled={busy} onAction={(item) => sendCommand(item.command, item.label)} />
               <div className="drive-pad">
                 <div className="pad-spacer" />
-                <button className="control pad-button" type="button" disabled={busy} onClick={() => sendCommand('forward', 'Forward')}><strong className="control-label">Forward</strong><span>W</span></button>
+                <button
+                  className="control pad-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={(event) => event.preventDefault()}
+                  onPointerCancel={(event) => handleDriveButtonRelease(event, 'forward', 'Forward Stop')}
+                  onPointerDown={(event) => handleDriveButtonPress(event, 'forward', 'Forward')}
+                  onPointerUp={(event) => handleDriveButtonRelease(event, 'forward', 'Forward Stop')}
+                ><strong className="control-label">Forward</strong><span>W</span></button>
                 <div className="pad-spacer" />
                 <button className="control pivot-button secondary" type="button" disabled={busy} onClick={() => sendPivot(-driveSpeed, driveSpeed, 'Pivot Left')}><strong className="control-label">Pivot Left</strong><span>A</span></button>
                 <button className="control stop" type="button" disabled={busy} onClick={() => sendCommand('stop', 'Stop')}><strong className="control-label">Stop</strong><span>Space</span></button>
                 <button className="control pivot-button secondary" type="button" disabled={busy} onClick={() => sendPivot(driveSpeed, -driveSpeed, 'Pivot Right')}><strong className="control-label">Pivot Right</strong><span>D</span></button>
                 <div className="pad-spacer" />
-                <button className="control pad-button" type="button" disabled={busy} onClick={() => sendCommand('backward', 'Reverse')}><strong className="control-label">Reverse</strong><span>S</span></button>
+                <button
+                  className="control pad-button"
+                  type="button"
+                  disabled={busy}
+                  onClick={(event) => event.preventDefault()}
+                  onPointerCancel={(event) => handleDriveButtonRelease(event, 'backward', 'Reverse Stop')}
+                  onPointerDown={(event) => handleDriveButtonPress(event, 'backward', 'Reverse')}
+                  onPointerUp={(event) => handleDriveButtonRelease(event, 'backward', 'Reverse Stop')}
+                ><strong className="control-label">Reverse</strong><span>S</span></button>
                 <div className="pad-spacer" />
               </div>
             </article>
@@ -711,7 +898,7 @@ export default function App() {
               <article className="subpanel telemetry-panel">
                 <div className="subpanel-head compact"><h2>Mission Log</h2></div>
                 <p className="command-result compact-log">{commandLog}</p>
-                <p className="status-detail keyboard-help compact-help">Keyboard: W/S drive, A/D pivot, Space stop, arrows move camera, [ and ] adjust speed.</p>
+                <p className="status-detail keyboard-help compact-help">Hold Forward or Reverse, or hold W/S, for continuous drive. A/D pivot, Space stop, arrows move camera, [ and ] adjust speed.</p>
               </article>
             </div>
           </section>

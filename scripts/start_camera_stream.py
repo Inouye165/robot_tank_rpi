@@ -21,20 +21,29 @@ else:
 
 class CameraRuntime:
     def __init__(self) -> None:
-        self.width = int(os.getenv("TANK_CAMERA_WIDTH", "640"))
-        self.height = int(os.getenv("TANK_CAMERA_HEIGHT", "480"))
+        self.camera_index = int(os.getenv("TANK_CAMERA_INDEX", "0"))
+        self.width = int(os.getenv("TANK_CAMERA_WIDTH", "1280"))
+        self.height = int(os.getenv("TANK_CAMERA_HEIGHT", "720"))
+        self.sensor_width = int(os.getenv("TANK_CAMERA_SENSOR_WIDTH", "4608"))
+        self.sensor_height = int(os.getenv("TANK_CAMERA_SENSOR_HEIGHT", "2592"))
         self.quality = int(os.getenv("TANK_CAMERA_JPEG_QUALITY", "80"))
+        self.frame_format = os.getenv("TANK_CAMERA_FRAME_FORMAT", "RGB888").upper()
         self._camera = None
         self._lock = threading.Lock()
         self._message = "Camera service starting."
+        self._camera_label = f"camera {self.camera_index}"
 
     def status(self) -> dict[str, object]:
         available = self._ensure_camera()
         return {
             "available": available,
             "message": self._message,
+            "camera_index": self.camera_index,
+            "camera_label": self._camera_label,
             "width": self.width,
             "height": self.height,
+            "sensor_width": self.sensor_width,
+            "sensor_height": self.sensor_height,
         }
 
     def stream_frames(self):
@@ -45,8 +54,7 @@ class CameraRuntime:
         while True:
             with self._lock:
                 frame = self._camera.capture_array()
-            frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-            ok, encoded = cv2.imencode('.jpg', frame_bgr, encode_params)
+            ok, encoded = cv2.imencode('.jpg', frame, encode_params)
             if not ok:
                 continue
             yield encoded.tobytes()
@@ -65,18 +73,37 @@ class CameraRuntime:
                 self._message = "No camera detected by Picamera2."
                 return False
 
+            if self.camera_index < 0 or self.camera_index >= len(camera_info):
+                self._message = (
+                    f"Configured camera index {self.camera_index} is out of range for "
+                    f"{len(camera_info)} detected camera(s)."
+                )
+                return False
+
+            selected_camera = camera_info[self.camera_index]
+            self._camera_label = (
+                f"camera {self.camera_index} ({selected_camera.get('Model', 'unknown model')}, "
+                f"{selected_camera.get('Id', 'unknown id')})"
+            )
+
             try:
-                camera = Picamera2()
-                config = camera.create_video_configuration(main={"size": (self.width, self.height), "format": "RGB888"})
+                camera = Picamera2(camera_num=self.camera_index)
+                config = camera.create_video_configuration(
+                    main={"size": (self.width, self.height), "format": self.frame_format},
+                    sensor={"output_size": (self.sensor_width, self.sensor_height)},
+                )
                 camera.configure(config)
                 camera.start()
                 time.sleep(0.5)
             except Exception as exc:
-                self._message = f"Camera start failed: {exc}"
+                self._message = f"Camera start failed for {self._camera_label}: {exc}"
                 return False
 
             self._camera = camera
-            self._message = f"Camera streaming at {self.width}x{self.height}."
+            self._message = (
+                f"{self._camera_label} streaming at {self.width}x{self.height} "
+                f"from sensor mode {self.sensor_width}x{self.sensor_height} using {self.frame_format}."
+            )
             return True
 
 

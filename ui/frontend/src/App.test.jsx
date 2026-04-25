@@ -100,7 +100,7 @@ function commandCalls(calls) {
 
 describe('App camera controls', () => {
   beforeEach(() => {
-    window.__TANK_APP_CONFIG__ = { cameraStreamPort: 8081 };
+    window.__TANK_APP_CONFIG__ = { cameraStreamPort: 8081, secondaryCameraStreamPort: 8082 };
   });
 
   afterEach(() => {
@@ -131,10 +131,10 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(screen.getByAltText('Robot tank camera stream')).toBeTruthy());
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
     calls.length = 0;
 
-    const frame = screen.getByAltText('Robot tank camera stream').parentElement;
+    const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
     expect(frame).toBeTruthy();
     frame.getBoundingClientRect = () => ({
       left: 0,
@@ -150,7 +150,7 @@ describe('App camera controls', () => {
 
     const cameraCalls = commandCalls(calls);
     expect(cameraCalls).toHaveLength(1);
-    expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 106, tilt: 90 });
+    expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 111, tilt: 90 });
   });
 
   it('center button sends one CENTERCAM request', async () => {
@@ -168,6 +168,13 @@ describe('App camera controls', () => {
     expect(cameraCalls[0]).toEqual({ command: 'center_camera' });
   });
 
+  it('renders the auxiliary camera viewport', async () => {
+    installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByAltText('Robot tank secondary camera stream')).toBeTruthy());
+  });
+
   it('arrow keys nudge by sending one CAMERA target command', async () => {
     const { calls } = installFetchMock();
     render(<App />);
@@ -181,6 +188,55 @@ describe('App camera controls', () => {
     const cameraCalls = commandCalls(calls);
     expect(cameraCalls).toHaveLength(1);
     expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 95, tilt: 90 });
+  });
+
+  it('repeats forward while the button is held and stops on release', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    calls.length = 0;
+
+    const forwardButton = screen.getByRole('button', { name: /forward/i });
+    fireEvent.pointerDown(forwardButton, { pointerId: 1 });
+
+    await waitFor(() => expect(commandCalls(calls)[0]).toEqual({ command: 'forward', speed: 50, duration_ms: 400 }));
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 280));
+    });
+
+    expect(commandCalls(calls).filter((call) => call.command === 'forward').length).toBeGreaterThan(1);
+
+    fireEvent.pointerUp(forwardButton, { pointerId: 1 });
+    await waitFor(() => expect(commandCalls(calls).at(-1)).toEqual({ command: 'stop' }));
+
+    const forwardCallCount = commandCalls(calls).filter((call) => call.command === 'forward').length;
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 280));
+    });
+
+    expect(commandCalls(calls).filter((call) => call.command === 'forward')).toHaveLength(forwardCallCount);
+  });
+
+  it('repeats reverse while S is held and stops on keyup', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    calls.length = 0;
+
+    fireEvent.keyDown(window, { key: 's' });
+    await waitFor(() => expect(commandCalls(calls)[0]).toEqual({ command: 'backward', speed: 50, duration_ms: 400 }));
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 280));
+    });
+
+    expect(commandCalls(calls).filter((call) => call.command === 'backward').length).toBeGreaterThan(1);
+
+    fireEvent.keyUp(window, { key: 's' });
+    await waitFor(() => expect(commandCalls(calls).at(-1)).toEqual({ command: 'stop' }));
   });
 
   it('shows firmware build stamp details in the panel', async () => {
