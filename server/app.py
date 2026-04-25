@@ -181,6 +181,7 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
             "index.html",
             commands=COMMANDS,
             camera_stream_port=config.camera_stream_port,
+            secondary_camera_stream_port=config.secondary_camera_stream_port,
         )
 
     @app.get("/sw.js")
@@ -193,6 +194,7 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
         payload = service.status()
         payload["startup_issues"] = app.config["STARTUP_ISSUES"]
         payload["camera_status_url"] = f"http://{config.server_host if config.server_host != '0.0.0.0' else '127.0.0.1'}:{config.camera_stream_port}/status"
+        payload["secondary_camera_status_url"] = f"http://{config.server_host if config.server_host != '0.0.0.0' else '127.0.0.1'}:{config.secondary_camera_stream_port}/status"
         return jsonify(payload)
 
     @app.get("/api/sensors")

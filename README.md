@@ -57,6 +57,11 @@ The app reads configuration from environment variables.
 
 - `TANK_SERVER_HOST` default: `0.0.0.0`
 - `TANK_SERVER_PORT` default: `5000`
+- `TANK_CAMERA_INDEX` default: `0`
+- `TANK_CAMERA_WIDTH` default: `1280`
+- `TANK_CAMERA_HEIGHT` default: `720`
+- `TANK_CAMERA_SENSOR_WIDTH` default: `4608`
+- `TANK_CAMERA_SENSOR_HEIGHT` default: `2592`
 - `TANK_CAMERA_STREAM_PORT` default: `8081`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
@@ -122,16 +127,26 @@ If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /
 
 This repo includes a small launcher script at `scripts/start_controller.sh` that auto-detects the first available Uno serial device from `/dev/ttyUSB*` or `/dev/ttyACM*` and then starts the Flask controller.
 
-The camera stream service uses system Python so it can access `picamera2` even though the main app runs inside the project virtualenv. Its launcher is `scripts/start_camera_stream.py` and its systemd unit is `scripts/robot-tank-camera.service`.
+The camera stream services use system Python so they can access `picamera2` even though the main app runs inside the project virtualenv. Their launcher is `scripts/start_camera_stream.py`, with `scripts/robot-tank-camera.service` for the primary wide-angle feed and `scripts/robot-tank-camera-secondary.service` for the smaller auxiliary feed.
+
+The primary camera unit defaults to `TANK_CAMERA_INDEX=1` so the cockpit's main viewport stays on the IMX708 wide-angle camera when both cameras are present. The secondary camera unit defaults to `TANK_CAMERA_INDEX=0` and serves the smaller auxiliary viewport.
+
+The web UI renders the wide-angle feed in the main viewport and places the second camera in a smaller window directly below it.
+
+The stream defaults to `1280x720` so IMX708-based Camera Module 3 hardware keeps its native 16:9 framing instead of being center-cropped into a 4:3 stream.
+
+For IMX708 wide-angle hardware, the stream service also requests the full `4608x2592` sensor mode before scaling down to the stream size. If you need to experiment with performance or framing, override `TANK_CAMERA_SENSOR_WIDTH` and `TANK_CAMERA_SENSOR_HEIGHT`.
 
 The included systemd service file is `scripts/robot-tank-rpi.service`. To install and enable it on the Pi:
 
 ```bash
 sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-rpi.service /etc/systemd/system/robot-tank-rpi.service
 sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-camera.service /etc/systemd/system/robot-tank-camera.service
+sudo cp ~/repos/robot_tank_rpi/scripts/robot-tank-camera-secondary.service /etc/systemd/system/robot-tank-camera-secondary.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now robot-tank-rpi.service
 sudo systemctl enable --now robot-tank-camera.service
+sudo systemctl enable --now robot-tank-camera-secondary.service
 ```
 
 Useful service commands:
@@ -139,10 +154,13 @@ Useful service commands:
 ```bash
 sudo systemctl status robot-tank-rpi.service
 sudo systemctl status robot-tank-camera.service
+sudo systemctl status robot-tank-camera-secondary.service
 sudo journalctl -u robot-tank-rpi.service -n 100 --no-pager
 sudo journalctl -u robot-tank-camera.service -n 100 --no-pager
+sudo journalctl -u robot-tank-camera-secondary.service -n 100 --no-pager
 sudo systemctl restart robot-tank-rpi.service
 sudo systemctl restart robot-tank-camera.service
+sudo systemctl restart robot-tank-camera-secondary.service
 ```
 
 If the camera is connected but the stream panel still reports unavailable, check:
@@ -150,6 +168,34 @@ If the camera is connected but the stream panel still reports unavailable, check
 - `sudo journalctl -u robot-tank-camera.service -n 100 --no-pager`
 - camera ribbon seating and power
 - that Picamera2 can see a device with `/usr/bin/python3 -c "from picamera2 import Picamera2; print(Picamera2.global_camera_info())"`
+
+## Raspberry Pi 5 camera note
+
+This Pi currently has `camera_auto_detect=1` in `/boot/firmware/config.txt`, so the first camera is configured through Raspberry Pi OS auto-detection, not through an explicit `dtoverlay=` line. For an IMX708-based Arducam Camera Module 3 compatible camera, that is the correct starting point.
+
+On Raspberry Pi 5, the camera/display connectors are not selected with `disp1` for libcamera or Picamera2 camera capture. If you are moving the camera to the other MIPI connector:
+
+- use the CSI connector, not a DSI display connector
+- on Pi 5, the ribbon contacts should face the Ethernet jack on the Pi side
+- keep `camera_auto_detect=1` unless you have a specific reason to force an overlay
+
+If you ever need to force the IMX708 onto the non-default connector manually, use `/boot/firmware/config.txt` with auto-detect disabled and an explicit camera overlay:
+
+```ini
+camera_auto_detect=0
+dtoverlay=imx708,cam0
+```
+
+If you leave off `,cam0`, Raspberry Pi's explicit overlay path defaults to camera connector 1. Reboot after any `config.txt` change.
+
+Useful Pi-side checks before re-enabling the service:
+
+```bash
+rpicam-hello --list-cameras
+/usr/bin/python3 -c "from picamera2 import Picamera2; print(Picamera2.global_camera_info())"
+sudo systemctl restart robot-tank-camera.service
+sudo journalctl -u robot-tank-camera.service -n 100 --no-pager
+```
 
 When the Pi opens the serial port, the Arduino Uno resets. The controller waits about 2 seconds before sending commands, then reads the startup banner if available. A good first health check from the UI is `Ping`, which should return `PONG` when the firmware is ready.
 
