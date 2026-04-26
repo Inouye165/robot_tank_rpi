@@ -264,3 +264,90 @@ def test_vision_service_runs_with_injected_fake_detector(monkeypatch):
     assert snapshot["targets"][0]["label"] == "tennis ball"
     person_entry = next(d for d in snapshot["detections"] if d["label"] == "person")
     assert person_entry["is_target"] is False
+
+
+def test_vision_status_includes_extended_fields_when_disabled(monkeypatch):
+    """The new vision status fields must be present even when disabled."""
+    service = VisionService(make_config(monkeypatch))
+    payload = service.get_status()
+
+    for key in (
+        "enabled",
+        "running",
+        "backend",
+        "model_backend",
+        "model_path",
+        "model_loaded",
+        "source_url",
+        "stream_connected",
+        "last_frame_time",
+        "last_detection_time",
+        "fps",
+        "detections",
+        "detections_count",
+        "message",
+    ):
+        assert key in payload, f"missing status field: {key}"
+
+    assert payload["backend"] == "disabled"
+    assert payload["model_loaded"] is False
+    assert payload["stream_connected"] is False
+    assert payload["detections_count"] == 0
+
+
+def test_vision_service_uses_frame_reader_when_available(monkeypatch):
+    """A FrameDetector + FrameReader must drive update_from_candidates without
+    reopening the MJPEG stream every iteration."""
+    from server.frame_reader import FakeFrameReader
+
+    fake_detector = FakeDetector(
+        candidates=[
+            {
+                "label": "tennis ball",
+                "confidence": 0.7,
+                "box": {"x": 0.5, "y": 0.5, "w": 0.05, "h": 0.05},
+            }
+        ]
+    )
+    reader = FakeFrameReader(frame=object())
+    config = make_config(monkeypatch)
+    service = VisionService(config, detector=fake_detector, frame_reader=reader)
+
+    # Drive one iteration of the future-ready path manually so the test
+    # stays deterministic and does not depend on the worker thread.
+    raw = service._detect_once()  # noqa: SLF001 - test-only access
+    service.update_from_candidates(raw)
+
+    snapshot = service.get_status()
+    assert fake_detector.frame_call_count == 1
+    assert fake_detector.call_count == 0  # legacy path NOT used
+    assert snapshot["stream_connected"] is True
+    assert snapshot["model_loaded"] is True
+    assert snapshot["detections_count"] == 1
+    assert snapshot["targets"][0]["label"] == "tennis ball"
+
+
+def test_vision_service_handles_unavailable_stream_gracefully(monkeypatch):
+    """When the frame reader has no frame yet, no detections are produced
+    and the cockpit must not crash."""
+    from server.frame_reader import FakeFrameReader
+
+    fake_detector = FakeDetector(
+        candidates=[
+            {
+                "label": "tennis ball",
+                "confidence": 0.7,
+                "box": {"x": 0.5, "y": 0.5, "w": 0.05, "h": 0.05},
+            }
+        ]
+    )
+    reader = FakeFrameReader(frame=None, connected=False)
+    config = make_config(monkeypatch)
+    service = VisionService(config, detector=fake_detector, frame_reader=reader)
+
+    raw = service._detect_once()  # noqa: SLF001
+    assert raw == []
+    assert fake_detector.frame_call_count == 0
+
+    snapshot = service.get_status()
+    assert snapshot["stream_connected"] is False

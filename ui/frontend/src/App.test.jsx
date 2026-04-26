@@ -319,9 +319,13 @@ describe('App camera controls', () => {
         enabled: true,
         running: true,
         source_url: 'http://127.0.0.1:8081/stream.mjpg',
+        backend: 'opencv_onnx',
         model_backend: 'opencv_onnx',
         model_path: 'models/yolo-nano.onnx',
+        model_loaded: true,
+        stream_connected: true,
         last_frame_time: '2026-04-26T15:30:00Z',
+        last_detection_time: '2026-04-26T15:30:00Z',
         fps: 2,
         detections: [
           {
@@ -399,5 +403,63 @@ describe('App camera controls', () => {
     expect(screen.getByTestId('vision-box-0')).toBeTruthy();
     expect(screen.getByTestId('vision-box-1')).toBeTruthy();
     expect(screen.getByTestId('vision-box-2')).toBeTruthy();
+  });
+
+  it('shows "model missing" when vision is enabled but the model is not loaded', async () => {
+    installFetchMock({
+      visionPayload: {
+        enabled: true,
+        running: false,
+        source_url: 'http://127.0.0.1:8081/stream.mjpg',
+        backend: 'opencv_onnx',
+        model_backend: 'opencv_onnx',
+        model_path: 'models/yolo-nano.onnx',
+        model_loaded: false,
+        stream_connected: false,
+        last_frame_time: null,
+        last_detection_time: null,
+        fps: 0,
+        detections: [],
+        detections_count: 0,
+        people_count: 0,
+        dog_count: 0,
+        hazards: [],
+        targets: [],
+        message: 'Vision monitoring enabled, but the model could not be loaded (model missing or OpenCV unavailable).',
+      },
+    });
+    render(<App />);
+
+    expect(await screen.findByText('Vision model missing')).toBeTruthy();
+    // Counts should still render with zeros and not crash.
+    expect(screen.getByText('People: 0')).toBeTruthy();
+  });
+
+  it('shows "waiting for stream" when the model is loaded but no frames have arrived', async () => {
+    installFetchMock({
+      visionPayload: {
+        enabled: true,
+        running: false,
+        source_url: 'http://127.0.0.1:8081/stream.mjpg',
+        backend: 'opencv_onnx',
+        model_backend: 'opencv_onnx',
+        model_path: 'models/yolo-nano.onnx',
+        model_loaded: true,
+        stream_connected: false,
+        last_frame_time: null,
+        last_detection_time: null,
+        fps: 0,
+        detections: [],
+        detections_count: 0,
+        people_count: 0,
+        dog_count: 0,
+        hazards: [],
+        targets: [],
+        message: 'Vision pipeline error: stream unavailable',
+      },
+    });
+    render(<App />);
+
+    expect(await screen.findByText('Vision waiting for stream')).toBeTruthy();
   });
 });
