@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .config import Config
 from .serial_service import SerialService
+from .vision_service import VisionService
 
 COMMANDS = {
     "forward": {
@@ -158,7 +159,10 @@ def build_serial_command(action: str, payload: dict[str, object], config: Config
     return None
 
 
-def create_app(serial_service: Optional[SerialService] = None) -> Flask:
+def create_app(
+    serial_service: Optional[SerialService] = None,
+    vision_service: Optional[VisionService] = None,
+) -> Flask:
     repo_root = Path(__file__).resolve().parent.parent
     config = Config()
     app = Flask(
@@ -173,6 +177,7 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
         write_timeout=config.serial_write_timeout,
         ready_delay=config.serial_ready_delay,
     )
+    app.config["VISION_SERVICE"] = vision_service or VisionService(config)
     app.config["STARTUP_ISSUES"] = []
 
     @app.get("/")
@@ -226,6 +231,16 @@ def create_app(serial_service: Optional[SerialService] = None) -> Flask:
         if result.status is not None:
             payload.update(result.status)
         return jsonify(payload), status_code
+
+    @app.get("/api/vision/status")
+    def vision_status():
+        service = app.config["VISION_SERVICE"]
+        return jsonify(service.get_status())
+
+    @app.get("/api/vision/detections")
+    def vision_detections():
+        service = app.config["VISION_SERVICE"]
+        return jsonify(service.get_detections())
 
     @app.post("/api/command")
     def send_command():

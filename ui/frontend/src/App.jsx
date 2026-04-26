@@ -60,6 +60,22 @@ const defaultFirmware = {
   target_tilt: null,
 };
 
+const defaultVision = {
+  enabled: false,
+  running: false,
+  source_url: null,
+  model_backend: 'disabled',
+  model_path: null,
+  last_frame_time: null,
+  fps: 0,
+  detections: [],
+  people_count: 0,
+  dog_count: 0,
+  hazards: [],
+  targets: [],
+  message: 'Vision monitoring disabled. Monitor-only mode is standing by.',
+};
+
 const commandButtons = [
   { command: 'set_speed', label: 'Set Speed', tone: 'secondary' },
   { command: 'ping', label: 'Ping', tone: 'secondary' },
@@ -79,6 +95,7 @@ const DRIVE_HOLD_MIN_PULSE_MS = 80;
 const DRIVE_HOLD_MIN_REPEAT_MS = 50;
 const DRIVE_HOLD_MAX_REPEAT_MS = 250;
 const FIRMWARE_STATUS_POLL_MS = 20000;
+const VISION_POLL_MS = 2000;
 
 // Click-to-center is calibrated in software because exact centering depends on camera FOV,
 // letterboxing, servo direction, backlash, and mount geometry on the physical tank.
@@ -134,6 +151,41 @@ function appLevel(status, serverOnline) {
   return { label: 'App online', tone: 'ok' };
 }
 
+function visionLevel(vision) {
+  if (!vision.enabled) {
+    return { label: 'Vision disabled', tone: 'pending' };
+  }
+  if (vision.running) {
+    return { label: 'Vision active', tone: 'ok' };
+  }
+  if (vision.model_backend === 'disabled' || !vision.model_path) {
+    return { label: 'Vision standby', tone: 'pending' };
+  }
+  return { label: 'Vision waiting', tone: 'warning' };
+}
+
+function formatVisionTime(value) {
+  if (!value) {
+    return '--';
+  }
+
+  const timestamp = new Date(value);
+  if (Number.isNaN(timestamp.getTime())) {
+    return value;
+  }
+
+  return timestamp.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatVisionCount(items) {
+  return Array.isArray(items) ? items.length : 0;
+}
+
 function useInterval(callback, delay) {
   useEffect(() => {
     const timer = window.setInterval(callback, delay);
@@ -173,6 +225,7 @@ export default function App() {
   const [secondaryCamera, setSecondaryCamera] = useState(defaultCamera);
   const [sensors, setSensors] = useState(defaultSensors);
   const [firmware, setFirmware] = useState(defaultFirmware);
+  const [vision, setVision] = useState(defaultVision);
   const [serverOnline, setServerOnline] = useState(true);
   const [commandLog, setCommandLog] = useState('No command sent yet.');
   const [installPrompt, setInstallPrompt] = useState(null);
@@ -200,6 +253,7 @@ export default function App() {
   const serialIndicator = statusLevel(status);
   const cameraIndicator = cameraLevel(camera);
   const appIndicator = appLevel(status, serverOnline);
+  const visionIndicator = visionLevel(vision);
 
   const serialDetail = status.connected
     ? `Serial link ready on ${status.port} @ ${status.baud_rate}.`
@@ -214,6 +268,9 @@ export default function App() {
   const firmwareDetail = firmware.ok
     ? 'R3-reported camera state.'
     : describeError({ message: firmware.message, error_code: firmware.error_code });
+  const hazardCount = formatVisionCount(vision.hazards);
+  const targetCount = formatVisionCount(vision.targets);
+  const visionLastSeen = formatVisionTime(vision.last_frame_time);
 
   useEffect(() => {
     driveConfigRef.current = {
@@ -299,6 +356,33 @@ export default function App() {
       setFirmware({
         ...defaultFirmware,
         message: 'Could not reach the firmware status endpoint.',
+      });
+    }
+  }
+
+  async function refreshVision() {
+    try {
+      const response = await fetch('/api/vision/detections');
+      const payload = await response.json();
+      setVision({
+        enabled: Boolean(payload.enabled),
+        running: Boolean(payload.running),
+        source_url: payload.source_url ?? null,
+        model_backend: payload.model_backend ?? 'disabled',
+        model_path: payload.model_path ?? null,
+        last_frame_time: payload.last_frame_time ?? null,
+        fps: Number.isFinite(payload.fps) ? payload.fps : Number(payload.fps || 0),
+        detections: Array.isArray(payload.detections) ? payload.detections : [],
+        people_count: payload.people_count ?? 0,
+        dog_count: payload.dog_count ?? 0,
+        hazards: Array.isArray(payload.hazards) ? payload.hazards : [],
+        targets: Array.isArray(payload.targets) ? payload.targets : [],
+        message: payload.message || defaultVision.message,
+      });
+    } catch {
+      setVision({
+        ...defaultVision,
+        message: 'Vision monitor is unavailable right now. Movement controls remain manual only.',
       });
     }
   }
@@ -586,6 +670,7 @@ export default function App() {
     refreshSecondaryCameraStatus();
     refreshSensors();
     refreshFirmwareStatus();
+    refreshVision();
     return () => {
       clearDriveHoldTimer();
       clearPendingCameraSend();
@@ -597,6 +682,7 @@ export default function App() {
   useInterval(refreshSecondaryCameraStatus, 5000);
   useInterval(refreshSensors, 1500);
   useInterval(refreshFirmwareStatus, FIRMWARE_STATUS_POLL_MS);
+  useInterval(refreshVision, VISION_POLL_MS);
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
@@ -762,6 +848,7 @@ export default function App() {
             <section className="viewport viewport-primary">
               <div className="camera-frame-wrap" onClick={handleVideoClick} style={{ cursor: camera.available ? 'crosshair' : 'default' }}>
                 {camera.available ? <img className="camera-stream" src={cameraStreamUrl} alt="Robot tank wide camera stream" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }} /> : null}
+                {camera.available ? <VisionOverlay detections={vision.detections} flipped={flipped} /> : null}
                 <div className="camera-overlay">
                   <div className="camera-hud-top">
                     <div className="status-stack status-stack-inline">
@@ -895,6 +982,28 @@ export default function App() {
                 <p className="status-detail sensor-copy">Firmware reply: {sensorResponseDetail}</p>
               </article>
 
+              <article className="subpanel vision-panel wide-panel">
+                <div className="subpanel-head compact">
+                  <h2>Vision</h2>
+                  <div className="status-stack status-stack-inline">
+                    <StatusPill label={visionIndicator.label} tone={visionIndicator.tone} />
+                    <StatusPill label="Monitor only" tone="warning" />
+                  </div>
+                </div>
+                <div className="detail-grid vision-grid">
+                  <DetailCard>Backend: {vision.model_backend || 'disabled'}</DetailCard>
+                  <DetailCard>Model: {vision.model_path || 'Not configured'}</DetailCard>
+                  <DetailCard>Last Seen: {visionLastSeen}</DetailCard>
+                  <DetailCard>FPS: {Number.isFinite(vision.fps) ? vision.fps : 0}</DetailCard>
+                  <DetailCard>People: {vision.people_count}</DetailCard>
+                  <DetailCard>Dogs: {vision.dog_count}</DetailCard>
+                  <DetailCard>Hazards: {hazardCount}</DetailCard>
+                  <DetailCard>Targets: {targetCount}</DetailCard>
+                </div>
+                <p className="status-detail sensor-copy">{vision.message}</p>
+                <p className="status-detail sensor-copy">Vision labels and alerts are monitor-only in this phase. No drive or chase commands are sent from detections.</p>
+              </article>
+
               <article className="subpanel telemetry-panel">
                 <div className="subpanel-head compact"><h2>Mission Log</h2></div>
                 <p className="command-result compact-log">{commandLog}</p>
@@ -990,5 +1099,36 @@ function SensorMetric({ label, value, unit = '', maximum, tone }) {
         <span className="sensor-bar-fill" />
       </div>
     </div>
+  );
+}
+
+function VisionOverlay({ detections, flipped }) {
+  if (!Array.isArray(detections) || detections.length === 0) {
+    return null;
+  }
+
+  return (
+    <svg
+      className="vision-overlay-svg"
+      viewBox="0 0 1 1"
+      preserveAspectRatio="xMidYMid meet"
+      aria-label="Vision overlay"
+      style={{ transform: flipped ? 'rotate(180deg)' : 'none' }}
+    >
+      {detections.map((detection, index) => (
+        <g key={`${detection.label}-${index}`} data-testid={`vision-box-${index}`} className={`vision-detection tone-${detection.category || 'object'}`}>
+          <rect
+            x={detection.box.x}
+            y={detection.box.y}
+            width={detection.box.w}
+            height={detection.box.h}
+            rx="0.01"
+            ry="0.01"
+          />
+          <text x={detection.box.x} y={Math.max(0.03, detection.box.y - 0.015)}>{`${detection.label} ${Math.round((detection.confidence || 0) * 100)}%`}</text>
+          <circle cx={detection.center?.x ?? detection.box.x + detection.box.w / 2} cy={detection.center?.y ?? detection.box.y + detection.box.h / 2} r="0.01" />
+        </g>
+      ))}
+    </svg>
   );
 }
