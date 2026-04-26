@@ -100,14 +100,14 @@ const CAMERA_NATIVE_ASPECT = 16 / 9;
 const CAMERA_NUDGE_DEG = 5;
 // Camera-tracking constants. DEAD_ZONE prevents servo jitter when the
 // detected object is already near-centre (in normalized 0-1 coords).
-const TRACKING_DEAD_ZONE = 0.06;  // ~7 deg; no move inside this radius
-const TRACKING_PAN_GAIN = 0.7;   // fraction of full-error correction per tick
-const TRACKING_TILT_GAIN = 0.7;
+const TRACKING_DEAD_ZONE = 0.04;  // ~5 deg; no move inside this radius
+const TRACKING_PAN_GAIN = 1.0;   // fraction of full-error correction per tick
+const TRACKING_TILT_GAIN = 1.0;
 const DRIVE_HOLD_MIN_PULSE_MS = 80;
 const DRIVE_HOLD_MIN_REPEAT_MS = 50;
 const DRIVE_HOLD_MAX_REPEAT_MS = 250;
 const FIRMWARE_STATUS_POLL_MS = 20000;
-const VISION_POLL_MS = 2000;
+const VISION_POLL_MS = 500;
 
 // Click-to-center is calibrated in software because exact centering depends on camera FOV,
 // letterboxing, servo direction, backlash, and mount geometry on the physical tank.
