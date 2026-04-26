@@ -21,13 +21,19 @@ cd "$repo_dir"
 source "$venv_activate"
 
 # Load operator-supplied runtime config from a local .env if present. The
-# file is gitignored; .env.example documents the supported keys. Every
-# assignment is auto-exported so the values reach the Python process.
+# file is gitignored; .env.example documents the supported keys. We read
+# each line and export it individually so values with spaces (e.g.
+# TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker) work correctly
+# without needing shell quoting in the .env file.
 if [[ -f "$env_file" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # skip blank lines and comment lines
+    [[ "$line" =~ ^[[:space:]]*$ ]] && continue
+    [[ "$line" =~ ^[[:space:]]*# ]] && continue
+    # strip optional 'export ' prefix so both forms are accepted
+    line="${line#export }"
+    export "$line"
+  done < "$env_file"
 fi
 
 # Server / serial defaults.
