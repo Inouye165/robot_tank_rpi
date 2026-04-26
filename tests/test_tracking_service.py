@@ -548,15 +548,15 @@ def test_follow_step_inside_deadzone_returns_none():
 
 
 def test_follow_step_box_right_of_centre_moves_pan():
-    """A box to the right of centre moves the pan servo (default invert=True)."""
+    """A box to the right of centre moves the pan servo (default invert=False)."""
     service = TrackingService()
     initial_pan = service._pan_deg
     # Box centred at (0.7, 0.5) → err_x = +0.2, well beyond deadzone
     result = service._follow_step({"x": 0.65, "y": 0.48, "w": 0.10, "h": 0.04})
     assert result is not None
     pan, tilt = result
-    # With pan_invert=True (default), positive err_x → negative delta → pan decreases
-    assert pan < initial_pan
+    # With pan_invert=False (default), positive err_x → positive delta → pan increases
+    assert pan > initial_pan
     # Tilt error inside deadzone, but the controller still updates state if any
     # axis moved; tilt should be near initial.
     assert abs(tilt - 90) <= 1
@@ -573,15 +573,15 @@ def test_follow_step_box_below_centre_moves_tilt():
     assert tilt != initial_tilt
 
 
-def test_follow_step_invert_disabled_flips_sign():
-    """With invert disabled, a right-of-centre box moves pan in the opposite direction."""
+def test_follow_step_invert_enabled_flips_sign():
+    """With invert enabled, a right-of-centre box moves pan in the opposite direction."""
     service = TrackingService()
-    service.set_follow(True, pan_invert=False, tilt_invert=False)
+    service.set_follow(True, pan_invert=True, tilt_invert=True)
     initial_pan = service._pan_deg
     result = service._follow_step({"x": 0.65, "y": 0.48, "w": 0.10, "h": 0.04})
     assert result is not None
     pan, _tilt = result
-    assert pan > initial_pan
+    assert pan < initial_pan
 
 
 def test_follow_step_max_step_clamped():
@@ -592,7 +592,7 @@ def test_follow_step_max_step_clamped():
     result = service._follow_step({"x": 0.93, "y": 0.49, "w": 0.04, "h": 0.02})
     assert result is not None
     pan, _tilt = result
-    # With pan_invert=True and gain 30 deg, err_x = 0.45 would imply -13.5
+    # With gain 30 deg, err_x = 0.45 would imply +13.5°
     # but max_step is 8°, so |delta| ≤ 8.
     assert abs(pan - initial_pan) <= 8
 

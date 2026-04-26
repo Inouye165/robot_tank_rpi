@@ -189,8 +189,8 @@ class TrackingService:
         self._current_label: str = "manual selection"
         # Follow-mode state
         self._follow_enabled: bool = False
-        self._pan_invert: bool = True   # camera mounted flipped 180° by default
-        self._tilt_invert: bool = True
+        self._pan_invert: bool = False  # set True if gimbal moves the wrong way on pan
+        self._tilt_invert: bool = False
         self._pan_deg: float = float(_SERVO_CENTER)
         self._tilt_deg: float = float(_SERVO_CENTER)
         self._cache: dict[str, Any] = self._build_idle_cache()

@@ -483,10 +483,8 @@ The controller:
 - Only runs while `status` is `tracking`. When the tracker reports
   `lost` or you stop tracking, no further servo commands are sent.
 
-If your camera is mounted upside-down or rotated, the default sign is
-correct (the cockpit's **Flip Cam** matches the typical inverted mount).
 If you find the gimbal moves the wrong way on either axis, send
-`{"enabled": true, "pan_invert": false}` and/or `"tilt_invert": false`
+`{"enabled": true, "pan_invert": true}` and/or `"tilt_invert": true`
 to `POST /api/tracking/follow`.
 
 **API**
