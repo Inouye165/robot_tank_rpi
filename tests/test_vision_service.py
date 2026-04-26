@@ -351,3 +351,56 @@ def test_vision_service_handles_unavailable_stream_gracefully(monkeypatch):
 
     snapshot = service.get_status()
     assert snapshot["stream_connected"] is False
+
+
+def test_vision_status_when_model_path_missing(monkeypatch):
+    """Backend selected but no model path -> calm 'no model path configured'
+    status, vision still not running, no crash."""
+    service = VisionService(
+        make_config(
+            monkeypatch,
+            TANK_VISION_ENABLED="true",
+            TANK_VISION_MODEL_BACKEND="opencv_onnx",
+            TANK_VISION_MODEL_PATH="",
+        )
+    )
+    payload = service.get_status()
+
+    assert payload["enabled"] is True
+    assert payload["running"] is False
+    assert payload["backend"] == "opencv_onnx"
+    assert payload["model_loaded"] is False
+    assert "no model path" in payload["message"].lower()
+
+
+def test_fake_backend_status_is_clearly_labelled(monkeypatch):
+    """The synthetic backend must be obviously labelled fake/test in the
+    vision status surface so an operator cannot mistake it for the real
+    detector. It must NOT require a model file."""
+    service = VisionService(
+        make_config(
+            monkeypatch,
+            TANK_VISION_ENABLED="true",
+            TANK_VISION_MODEL_BACKEND="fake",
+            TANK_VISION_MODEL_PATH="",
+        )
+    )
+
+    try:
+        # Drive one synthetic detection cycle deterministically rather than
+        # relying on the background worker thread.
+        raw = service._detect_once()  # noqa: SLF001
+        service.update_from_candidates(raw)
+
+        snapshot = service.get_status()
+        assert snapshot["enabled"] is True
+        assert snapshot["backend"] == "fake"
+        assert snapshot["model_backend"] == "fake"
+        # Fake backend must be obviously labelled in the message.
+        assert "fake" in snapshot["message"].lower()
+        # Synthetic detections should appear (>=1 of the seeded entries).
+        assert snapshot["detections_count"] >= 1
+        labels = {d["label"] for d in snapshot["detections"]}
+        assert "tennis ball" in labels
+    finally:
+        service.stop()

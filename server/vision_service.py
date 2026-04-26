@@ -87,6 +87,11 @@ class VisionService:
             return "Vision monitoring disabled. Set TANK_VISION_ENABLED=true to enable monitor-only detection."
         if model_backend == "disabled":
             return "Vision monitoring enabled, but model backend is disabled. No detections will run."
+        if model_backend == "fake":
+            return (
+                "Vision running in FAKE/TEST mode (manual UI verification only). "
+                "Detections are synthetic. No drive commands will ever be sent."
+            )
         if not model_path:
             return "Vision monitoring enabled, but no model path is configured."
         if not self._detector_model_loaded():
@@ -101,15 +106,18 @@ class VisionService:
     def _start_if_configured(self) -> None:
         if not self._config.vision_enabled:
             return
-        if (self._config.vision_model_backend or "disabled") == "disabled":
+        backend = self._config.vision_model_backend or "disabled"
+        if backend == "disabled":
             return
-        if not self._config.vision_model_path:
+        # The fake backend is allowed to run without a model file because
+        # it only emits synthetic detections for manual UI verification.
+        if backend != "fake" and not self._config.vision_model_path:
             return
 
         # Auto-construct the OpenCV ONNX detector + MJPEG frame reader when
         # the operator selected the opencv_onnx backend and did not pass
         # explicit collaborators. This keeps tests free to inject fakes.
-        if self._detector is None and self._config.vision_model_backend == "opencv_onnx":
+        if self._detector is None and backend == "opencv_onnx":
             try:
                 from .detectors import OpenCvOnnxDetector
 
@@ -121,7 +129,30 @@ class VisionService:
                 LOGGER.warning("Failed to construct OpenCvOnnxDetector: %s", exc)
                 self._detector = None
 
-        if self._frame_reader is None and self._detector is not None:
+        # Auto-construct a FakeDetector when the operator selected the
+        # fake/test backend. The synthetic detections only exist so the
+        # cockpit UI can be verified without a real model. This backend
+        # never sends drive commands and is clearly labelled in the
+        # status message.
+        if self._detector is None and backend == "fake":
+            from .detectors import FakeDetector
+
+            self._detector = FakeDetector(
+                candidates=[
+                    {
+                        "label": "tennis ball",
+                        "confidence": 0.82,
+                        "box": {"x": 0.45, "y": 0.55, "w": 0.08, "h": 0.08},
+                    },
+                    {
+                        "label": "traffic cone",
+                        "confidence": 0.74,
+                        "box": {"x": 0.20, "y": 0.60, "w": 0.10, "h": 0.18},
+                    },
+                ]
+            )
+
+        if self._frame_reader is None and self._detector is not None and backend == "opencv_onnx":
             try:
                 from .frame_reader import MjpegFrameReader
 
@@ -271,6 +302,14 @@ class VisionService:
         targets = [item for item in classified if item["is_target"]]
         people_count = sum(1 for item in classified if item["category"] == "person")
         dog_count = sum(1 for item in classified if item["category"] == "dog")
+        backend = self._config.vision_model_backend or "disabled"
+        if backend == "fake":
+            active_message = (
+                "Vision running in FAKE/TEST mode (synthetic detections). "
+                "No drive commands will ever be sent."
+            )
+        else:
+            active_message = "Vision monitoring active in monitor-only mode."
         with self._lock:
             self._cache.update(
                 {
@@ -288,7 +327,7 @@ class VisionService:
                     "dog_count": dog_count,
                     "hazards": hazards,
                     "targets": targets,
-                    "message": "Vision monitoring active in monitor-only mode.",
+                    "message": active_message,
                 }
             )
 

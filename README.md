@@ -267,6 +267,90 @@ If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /
 
 This repo includes a small launcher script at `scripts/start_controller.sh` that auto-detects the first available Uno serial device from `/dev/ttyUSB*` or `/dev/ttyACM*` and then starts the Flask controller.
 
+### Runtime configuration via `.env`
+
+`scripts/start_controller.sh` loads a local `.env` file at the repo root if
+one exists, before applying defaults. This is how the systemd unit picks up
+operator-supplied values for the vision backend (otherwise it would start
+with vision disabled).
+
+- The file lives at `/home/ron/repos/robot_tank_rpi/.env`.
+- It is **gitignored**. Do not commit secrets or local model paths.
+- `.env.example` documents every supported key.
+- The script applies safe defaults for any value the `.env` does not set,
+  so vision stays **disabled** unless explicitly enabled. People and dogs
+  remain non-target by default. No autonomous movement, no drive commands
+  from vision.
+
+Example `.env` for enabling the real backend on the Pi:
+
+```bash
+TANK_VISION_ENABLED=true
+TANK_VISION_MODEL_BACKEND=opencv_onnx
+TANK_VISION_MODEL_PATH=/home/ron/repos/robot_tank_rpi/models/yolo-nano.onnx
+TANK_VISION_SOURCE_URL=http://127.0.0.1:8081/stream.mjpg
+TANK_VISION_SAMPLE_FPS=2
+TANK_VISION_CONFIDENCE=0.45
+TANK_VISION_FRAME_WIDTH=640
+TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
+```
+
+After changing `.env`, restart the service:
+
+```bash
+sudo systemctl restart robot-tank-rpi.service
+```
+
+### Manual UI test mode (`fake` backend)
+
+For verifying the cockpit overlay/state machine without a real ONNX model:
+
+```bash
+TANK_VISION_ENABLED=true
+TANK_VISION_MODEL_BACKEND=fake
+```
+
+This emits a couple of synthetic detections, is **clearly labelled
+FAKE/TEST in `/api/vision/status`**, and never sends drive commands.
+Switch back to `disabled` or `opencv_onnx` for normal operation.
+
+### Verifying runtime config on the Pi
+
+The repo ships a small diagnostic script at
+`scripts/check_vision_runtime.sh`. It prints the systemd state, recent
+journal lines, the live `/api/vision/status` and `/api/vision/detections`
+payloads, the camera stream HEAD response, an OpenCV import check using
+the project venv, and whether the configured model file exists.
+
+```bash
+bash /home/ron/repos/robot_tank_rpi/scripts/check_vision_runtime.sh
+```
+
+You can also run the underlying commands by hand:
+
+```bash
+# Service state and recent logs
+systemctl status robot-tank-rpi.service
+sudo journalctl -u robot-tank-rpi.service -n 100 --no-pager
+
+# Live vision payloads (controller default port 5000)
+curl -sS http://127.0.0.1:5000/api/vision/status | jq .
+curl -sS http://127.0.0.1:5000/api/vision/detections | jq .
+
+# Camera stream is reachable (primary wide cam)
+curl -I http://127.0.0.1:8081/stream.mjpg
+
+# OpenCV import using the project venv
+/home/ron/repos/robot_tank_rpi/.venv/bin/python3 -c "import cv2; print(cv2.__version__)"
+
+# Model file exists
+ls -la "$TANK_VISION_MODEL_PATH"
+```
+
+Expected results when the backend is healthy: `enabled=true`,
+`model_loaded=true`, `stream_connected=true`, and the cockpit Vision pill
+reads **Vision active**.
+
 The camera stream services use system Python so they can access `picamera2` even though the main app runs inside the project virtualenv. Their launcher is `scripts/start_camera_stream.py`, with `scripts/robot-tank-camera.service` for the primary wide-angle feed and `scripts/robot-tank-camera-secondary.service` for the smaller auxiliary feed.
 
 The primary camera unit defaults to `TANK_CAMERA_INDEX=1` so the cockpit's main viewport stays on the IMX708 wide-angle camera when both cameras are present. The secondary camera unit defaults to `TANK_CAMERA_INDEX=0` and serves the smaller auxiliary viewport.
