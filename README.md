@@ -74,7 +74,7 @@ The app reads configuration from environment variables.
 - `TANK_VISION_SAMPLE_FPS` default: `2`
 - `TANK_VISION_CONFIDENCE` default: `0.45`
 - `TANK_VISION_FRAME_WIDTH` default: `640`
-- `TANK_VISION_TARGET_LABELS` default: `person,dog`
+- `TANK_VISION_TARGET_LABELS` default: `tennis ball,traffic cone,marker` (monitor-only safety: people/dogs are detected and counted but are NOT target candidates by default)
 - `TANK_VISION_HAZARD_LABELS` default: `chair,backpack,suitcase,bottle,box,cup,sports ball,potted plant,traffic cone,unknown obstacle`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
@@ -174,7 +174,9 @@ Example configuration:
 export TANK_VISION_ENABLED=true
 export TANK_VISION_MODEL_BACKEND=opencv_onnx
 export TANK_VISION_MODEL_PATH=$PWD/models/yolo-nano.onnx
-export TANK_VISION_TARGET_LABELS=person,dog,tennis ball
+# Safe markers only by default. Add person/dog ONLY if you understand the
+# implications; this phase is still monitor-only and does not act on targets.
+export TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
 ```
 
 If OpenCV/model support is not installed, leave `TANK_VISION_MODEL_BACKEND=disabled` and the cockpit will stay in monitor-only standby.

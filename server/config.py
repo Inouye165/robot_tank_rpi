@@ -59,7 +59,15 @@ class Config:
     vision_sample_fps: float = field(default_factory=lambda: _float_env("TANK_VISION_SAMPLE_FPS", 2.0))
     vision_confidence: float = field(default_factory=lambda: _float_env("TANK_VISION_CONFIDENCE", 0.45))
     vision_frame_width: int = field(default_factory=lambda: _int_env("TANK_VISION_FRAME_WIDTH", 640))
-    vision_target_labels: str = field(default_factory=lambda: _str_env("TANK_VISION_TARGET_LABELS", "person,dog"))
+    vision_target_labels: str = field(
+        default_factory=lambda: _str_env(
+            "TANK_VISION_TARGET_LABELS",
+            # Monitor-only safety: people and dogs are detected and counted, but
+            # are intentionally NOT target candidates by default. Only safe
+            # marker objects are eligible until an operator opts in explicitly.
+            "tennis ball,traffic cone,marker",
+        )
+    )
     vision_hazard_labels: str = field(
         default_factory=lambda: _str_env(
             "TANK_VISION_HAZARD_LABELS",
