@@ -1,4 +1,4 @@
-const CACHE_NAME = 'robot-tank-react-shell-v1';
+const CACHE_NAME = 'robot-tank-react-shell-v3';
 const APP_SHELL = [
   '/',
   '/static/dist/app.js',
