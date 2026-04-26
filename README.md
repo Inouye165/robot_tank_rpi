@@ -434,7 +434,67 @@ The web UI exposes:
 - `Center Camera`, `Ping`, `Slow Ramp Test`, and a compact firmware status panel showing build plus current/target pan and tilt
 - installable PWA metadata so the control screen can be launched in standalone mode from a phone or tablet
 
-## Run tests
+## Manual area tracking
+
+The cockpit includes a monitor-only manual ROI (region of interest) tracker. This lets you select any visual patch on the live camera feed and have the backend follow it across frames — even if the app does not know what the object is.
+
+**How it works**
+
+1. Click **Track area** in the Turret panel.
+2. Drag a rectangle around anything on the wide camera view — a fingertip, a toy, a coloured marker.
+3. On release, the app sends the normalised bounding box to `POST /api/tracking/start`.
+4. The backend initialises an OpenCV tracker (CSRT preferred, falling back to KCF) on the current camera frame and starts a background loop that updates the box at roughly 5 FPS.
+5. The cockpit overlays a yellow dashed box on the camera feed and labels it with the selection name.
+6. Click **Stop tracking** to end the session.
+
+**This is tracking, not object detection.** The tracker follows a specific visual patch by appearance, not by recognising what the object is. It works on any visual region you select.
+
+**Limits**
+
+- Occlusion: if the object is fully hidden behind another object, the tracker will lose it.
+- Blur or lighting change: fast motion blur or sudden lighting shifts can cause the tracker to drift or lose the target.
+- Object leaving frame: once the object exits the camera view, the tracker reports `status: "lost"`.
+- Re-entry: the tracker does not re-acquire the object after losing it. Select the object again to restart.
+
+When the tracker loses the target it reports `status: "lost"` and clears the box. The UI shows: **Tracking lost — select the object again.** No stale box is displayed.
+
+**Safety**
+
+- Monitor-only. Tracking output is display-only.
+- The backend never sends serial or drive commands from tracking.
+- The tank does not move autonomously.
+- People and dogs are not navigation targets.
+
+**API**
+
+- `GET /api/tracking/status` — current tracking state
+- `POST /api/tracking/start` — `{"box": {"x": …, "y": …, "w": …, "h": …}, "label": "manual selection"}` with normalised 0–1 coords
+- `POST /api/tracking/stop` — stop and reset
+- `POST /api/tracking/reset` — alias for stop
+
+Status payload shape:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "status": "tracking",
+  "label": "manual selection",
+  "box": { "x": 0.25, "y": 0.30, "w": 0.15, "h": 0.20 },
+  "confidence": null,
+  "last_update_time": "2026-04-26T12:00:00Z",
+  "fps": 5.0,
+  "message": "Tracking manual selection"
+}
+```
+
+`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `no_frame`.
+
+**OpenCV optional**
+
+If `opencv-python` or `opencv-python-headless` is not installed, the endpoint returns `status: "opencv_missing"` instead of crashing. Everything else in the cockpit continues to work normally.
+
+
 
 ```bash
 source .venv/bin/activate

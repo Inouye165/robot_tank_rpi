@@ -29,6 +29,17 @@ function installFetchMock(options = {}) {
     targets: [],
     message: 'Vision monitoring disabled. Monitor-only mode is standing by.',
   };
+  const trackingPayload = options.trackingPayload || {
+    enabled: true,
+    running: false,
+    status: 'idle',
+    label: null,
+    box: null,
+    confidence: null,
+    last_update_time: null,
+    fps: 0,
+    message: 'No tracking active. Select an area on the camera feed to begin.',
+  };
   const calls = [];
   const mock = vi.fn(async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.toString();
@@ -79,6 +90,21 @@ function installFetchMock(options = {}) {
 
     if (url.endsWith('/api/vision/detections')) {
       return makeJsonResponse(visionPayload);
+    }
+
+    if (url.endsWith('/api/tracking/status')) {
+      return makeJsonResponse(options.trackingPayload || trackingPayload);
+    }
+
+    if (url.endsWith('/api/tracking/start')) {
+      if (options.trackingStartResult !== undefined) {
+        return makeJsonResponse(options.trackingStartResult, options.trackingStartResult.ok !== false);
+      }
+      return makeJsonResponse({ ok: true });
+    }
+
+    if (url.endsWith('/api/tracking/stop') || url.endsWith('/api/tracking/reset')) {
+      return makeJsonResponse({ ok: true });
     }
 
     if (url.endsWith('/status')) {
@@ -461,5 +487,178 @@ describe('App camera controls', () => {
     render(<App />);
 
     expect(await screen.findByText('Vision waiting for stream')).toBeTruthy();
+  });
+});
+
+describe('ROI tracking UI', () => {
+  beforeEach(() => {
+    window.__TANK_APP_CONFIG__ = { cameraStreamPort: 8081, secondaryCameraStreamPort: 8082 };
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+    delete window.__TANK_APP_CONFIG__;
+  });
+
+  it('renders the "Track area" button', async () => {
+    installFetchMock();
+    render(<App />);
+
+    expect(await screen.findByRole('button', { name: 'Track area' })).toBeTruthy();
+  });
+
+  it('Track area button enters selection mode (shows "Drawing…")', async () => {
+    installFetchMock();
+    render(<App />);
+
+    const btn = await screen.findByRole('button', { name: 'Track area' });
+    fireEvent.click(btn);
+
+    expect(screen.getByRole('button', { name: 'Drawing…' })).toBeTruthy();
+  });
+
+  it('clicking Track area again cancels selection mode', async () => {
+    installFetchMock();
+    render(<App />);
+
+    const btn = await screen.findByRole('button', { name: 'Track area' });
+    fireEvent.click(btn);
+    fireEvent.click(screen.getByRole('button', { name: 'Drawing…' }));
+
+    expect(await screen.findByRole('button', { name: 'Track area' })).toBeTruthy();
+  });
+
+  it('dragging over the camera creates a selection overlay and calls /api/tracking/start', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Track area' }));
+
+    const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
+    frame.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360,
+    });
+
+    fireEvent.mouseDown(frame, { clientX: 100, clientY: 80 });
+    fireEvent.mouseMove(frame, { clientX: 300, clientY: 200 });
+    fireEvent.mouseUp(frame, { clientX: 300, clientY: 200 });
+
+    await waitFor(() => {
+      const trackingCalls = calls.filter((c) => c.url.endsWith('/api/tracking/start'));
+      expect(trackingCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const startCall = calls.find((c) => c.url.endsWith('/api/tracking/start'));
+    const body = JSON.parse(startCall.init.body);
+    expect(body.box).toBeDefined();
+    expect(body.label).toBe('manual selection');
+    // The box coords should be normalised [0, 1]
+    expect(body.box.x).toBeGreaterThanOrEqual(0);
+    expect(body.box.x).toBeLessThanOrEqual(1);
+    expect(body.box.w).toBeGreaterThan(0);
+    expect(body.box.h).toBeGreaterThan(0);
+  });
+
+  it('renders the tracking box SVG when tracking is active', async () => {
+    installFetchMock({
+      trackingPayload: {
+        enabled: true,
+        running: true,
+        status: 'tracking',
+        label: 'manual selection',
+        box: { x: 0.2, y: 0.3, w: 0.15, h: 0.2 },
+        confidence: null,
+        last_update_time: '2026-04-26T12:00:00Z',
+        fps: 5,
+        message: 'Tracking manual selection',
+      },
+    });
+    render(<App />);
+
+    // Camera image must be rendered for TrackingOverlay to appear
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
+
+    expect(await screen.findByLabelText('Tracking overlay')).toBeTruthy();
+    expect(screen.getByTestId('tracking-box')).toBeTruthy();
+  });
+
+  it('shows lost tracking message when status is "lost"', async () => {
+    installFetchMock({
+      trackingPayload: {
+        enabled: true,
+        running: false,
+        status: 'lost',
+        label: 'manual selection',
+        box: null,
+        confidence: null,
+        last_update_time: '2026-04-26T12:00:00Z',
+        fps: 0,
+        message: 'Tracking lost — select the object again.',
+      },
+    });
+    render(<App />);
+
+    expect(await screen.findByText('Tracking lost — select the object again.')).toBeTruthy();
+  });
+
+  it('Stop tracking button calls /api/tracking/stop', async () => {
+    const { calls } = installFetchMock({
+      trackingPayload: {
+        enabled: true,
+        running: true,
+        status: 'tracking',
+        label: 'manual selection',
+        box: { x: 0.2, y: 0.3, w: 0.15, h: 0.2 },
+        confidence: null,
+        last_update_time: '2026-04-26T12:00:00Z',
+        fps: 5,
+        message: 'Tracking manual selection',
+      },
+    });
+    render(<App />);
+
+    const stopBtn = await screen.findByRole('button', { name: 'Stop tracking' });
+    fireEvent.click(stopBtn);
+
+    await waitFor(() => {
+      const stopCalls = calls.filter((c) => c.url.endsWith('/api/tracking/stop'));
+      expect(stopCalls.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('does not render a tracking box when status is idle', async () => {
+    installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.queryByTestId('tracking-box')).toBeNull());
+  });
+
+  it('tiny drag (accidental tap) does not call /api/tracking/start', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Track area' }));
+
+    const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
+    frame.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 640, height: 360, right: 640, bottom: 360,
+    });
+
+    // Tiny drag — start and end at almost the same point
+    fireEvent.mouseDown(frame, { clientX: 100, clientY: 80 });
+    fireEvent.mouseMove(frame, { clientX: 101, clientY: 81 });
+    fireEvent.mouseUp(frame, { clientX: 101, clientY: 81 });
+
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+
+    const trackingCalls = calls.filter((c) => c.url.endsWith('/api/tracking/start'));
+    expect(trackingCalls).toHaveLength(0);
   });
 });

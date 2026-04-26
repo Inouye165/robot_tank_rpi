@@ -98,6 +98,11 @@ class VisionService:
             return "Vision monitoring enabled, but the model could not be loaded (model missing or OpenCV unavailable)."
         return "Vision monitoring ready."
 
+    @property
+    def frame_reader(self) -> Any | None:
+        """Expose the internal frame reader so the tracking service can share it."""
+        return self._frame_reader
+
     def _detector_model_loaded(self) -> bool:
         if self._detector is None:
             return False

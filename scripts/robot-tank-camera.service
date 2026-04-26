@@ -10,8 +10,8 @@ WorkingDirectory=/home/ron/repos/robot_tank_rpi
 Environment=TANK_CAMERA_INDEX=1
 Environment=TANK_CAMERA_WIDTH=1280
 Environment=TANK_CAMERA_HEIGHT=720
-Environment=TANK_CAMERA_SENSOR_WIDTH=4608
-Environment=TANK_CAMERA_SENSOR_HEIGHT=2592
+Environment=TANK_CAMERA_SENSOR_WIDTH=2304
+Environment=TANK_CAMERA_SENSOR_HEIGHT=1296
 Environment=TANK_CAMERA_STREAM_PORT=8081
 ExecStart=/home/ron/repos/robot_tank_rpi/scripts/start_camera_stream.py
 Restart=always

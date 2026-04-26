@@ -8,6 +8,7 @@ from flask import Flask, jsonify, render_template, request, send_from_directory
 
 from .config import Config
 from .serial_service import SerialService
+from .tracking_service import TrackingService
 from .vision_service import VisionService
 
 COMMANDS = {
@@ -162,6 +163,7 @@ def build_serial_command(action: str, payload: dict[str, object], config: Config
 def create_app(
     serial_service: Optional[SerialService] = None,
     vision_service: Optional[VisionService] = None,
+    tracking_service: Optional[TrackingService] = None,
 ) -> Flask:
     repo_root = Path(__file__).resolve().parent.parent
     config = Config()
@@ -178,6 +180,10 @@ def create_app(
         ready_delay=config.serial_ready_delay,
     )
     app.config["VISION_SERVICE"] = vision_service or VisionService(config)
+    vision_svc = app.config["VISION_SERVICE"]
+    app.config["TRACKING_SERVICE"] = tracking_service or TrackingService(
+        frame_reader=vision_svc.frame_reader,
+    )
     app.config["STARTUP_ISSUES"] = []
 
     @app.get("/")
@@ -241,6 +247,35 @@ def create_app(
     def vision_detections():
         service = app.config["VISION_SERVICE"]
         return jsonify(service.get_detections())
+
+    @app.get("/api/tracking/status")
+    def tracking_status():
+        service = app.config["TRACKING_SERVICE"]
+        return jsonify(service.get_status())
+
+    @app.post("/api/tracking/start")
+    def tracking_start():
+        payload = request.get_json(silent=True) or {}
+        box = payload.get("box")
+        label = str(payload.get("label", "manual selection"))
+        if box is None:
+            return jsonify({"ok": False, "error": "Missing 'box' field"}), 400
+        service = app.config["TRACKING_SERVICE"]
+        result = service.start_tracking(box, label)
+        status_code = 200 if result.get("ok") else 400
+        return jsonify(result), status_code
+
+    @app.post("/api/tracking/stop")
+    def tracking_stop():
+        service = app.config["TRACKING_SERVICE"]
+        result = service.stop_tracking()
+        return jsonify(result)
+
+    @app.post("/api/tracking/reset")
+    def tracking_reset():
+        service = app.config["TRACKING_SERVICE"]
+        result = service.reset()
+        return jsonify(result)
 
     @app.post("/api/command")
     def send_command():

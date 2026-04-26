@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox } from './visionGeometry';
+import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox, unprojectNormalizedBox } from './visionGeometry';
 
 const SERIAL_ERROR_HELP = {
   'serial-port-missing': 'Serial port missing. Check the USB cable and TANK_SERIAL_PORT.',
@@ -83,6 +83,18 @@ const defaultVision = {
   message: 'Vision monitoring disabled. Monitor-only mode is standing by.',
 };
 
+const defaultRoiTracking = {
+  enabled: true,
+  running: false,
+  status: 'idle',
+  label: null,
+  box: null,
+  confidence: null,
+  last_update_time: null,
+  fps: 0,
+  message: 'No tracking active. Select an area on the camera feed to begin.',
+};
+
 const commandButtons = [
   { command: 'set_speed', label: 'Set Speed', tone: 'secondary' },
   { command: 'ping', label: 'Ping', tone: 'secondary' },
@@ -94,6 +106,7 @@ const cameraButtons = [
 ];
 
 const CAMERA_TARGET_THROTTLE_MS = 90;
+const TRACKING_POLL_MS = 300;
 const CAMERA_HFOV_DEG = 114;
 const CAMERA_VFOV_DEG = 81;
 const CAMERA_NATIVE_ASPECT = 16 / 9;
@@ -244,12 +257,18 @@ export default function App() {
   const [sensors, setSensors] = useState(defaultSensors);
   const [firmware, setFirmware] = useState(defaultFirmware);
   const [vision, setVision] = useState(defaultVision);
+  const [roiTracking, setRoiTracking] = useState(defaultRoiTracking);
+  const [roiSelectMode, setRoiSelectMode] = useState(false);
+  const [roiDrag, setRoiDrag] = useState(null);
   const [serverOnline, setServerOnline] = useState(true);
   const [commandLog, setCommandLog] = useState('No command sent yet.');
   const [installPrompt, setInstallPrompt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [flipped, setFlipped] = useState(true);
   const [trackingEnabled, setTrackingEnabled] = useState(false);
+  const roiDragRef = useRef(null);
+  const roiContainerAspectRef = useRef(16 / 9);
+  const roiFrameRef = useRef(null);
   const activeKeysRef = useRef(new Set());
   const driveConfigRef = useRef({ speed: 50, duration: 400 });
   const driveHoldRef = useRef({ command: null, timerId: null, inFlight: false });
@@ -421,6 +440,118 @@ export default function App() {
         ...defaultVision,
         message: 'Vision monitor is unavailable right now. Movement controls remain manual only.',
       });
+    }
+  }
+
+  async function refreshRoiTracking() {
+    try {
+      const response = await fetch('/api/tracking/status');
+      const payload = await response.json();
+      setRoiTracking({
+        enabled: Boolean(payload.enabled),
+        running: Boolean(payload.running),
+        status: payload.status ?? 'idle',
+        label: payload.label ?? null,
+        box: payload.box ?? null,
+        confidence: payload.confidence ?? null,
+        last_update_time: payload.last_update_time ?? null,
+        fps: Number.isFinite(payload.fps) ? payload.fps : 0,
+        message: payload.message ?? defaultRoiTracking.message,
+      });
+    } catch {
+      // Tracking poll failing silently is acceptable; UI keeps last known state.
+    }
+  }
+
+  async function stopRoiTracking() {
+    try {
+      await fetch('/api/tracking/stop', { method: 'POST' });
+    } catch {
+      // best-effort
+    }
+    setRoiSelectMode(false);
+    setRoiDrag(null);
+    roiDragRef.current = null;
+    setRoiTracking(defaultRoiTracking);
+  }
+
+  function handleRoiMouseDown(event) {
+    if (!roiSelectMode) return;
+    event.preventDefault();
+    const el = roiFrameRef.current;
+    const rect = el ? el.getBoundingClientRect() : { left: 0, top: 0, width: 1, height: 1 };
+    roiContainerAspectRef.current = rect.width > 0 && rect.height > 0
+      ? rect.width / rect.height
+      : 16 / 9;
+    const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const drag = { x0: x, y0: y, x1: x, y1: y };
+    roiDragRef.current = drag;
+    setRoiDrag(drag);
+  }
+
+  function handleRoiMouseMove(event) {
+    if (!roiDragRef.current) return;
+    event.preventDefault();
+    const el = roiFrameRef.current;
+    const rect = el ? el.getBoundingClientRect() : { left: 0, top: 0, width: 1, height: 1 };
+    const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
+    const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
+    const drag = { ...roiDragRef.current, x1: x, y1: y };
+    roiDragRef.current = drag;
+    setRoiDrag(drag);
+  }
+
+  async function handleRoiMouseUp(event) {
+    const drag = roiDragRef.current;
+    roiDragRef.current = null;
+    setRoiDrag(null);
+    setRoiSelectMode(false);
+
+    if (!drag) return;
+
+    // Compute normalised container-space box from drag start/end
+    const containerBox = {
+      x: Math.min(drag.x0, drag.x1),
+      y: Math.min(drag.y0, drag.y1),
+      w: Math.abs(drag.x1 - drag.x0),
+      h: Math.abs(drag.y1 - drag.y0),
+    };
+
+    // Skip tiny accidental taps and guard against NaN coords
+    if (
+      !Number.isFinite(containerBox.w) || !Number.isFinite(containerBox.h) ||
+      containerBox.w < 0.01 || containerBox.h < 0.01
+    ) return;
+
+    // Invert letterbox to get source-image normalised coords
+    const sourceBox = unprojectNormalizedBox(containerBox, {
+      sourceAspect: DEFAULT_SOURCE_ASPECT,
+      containerAspect: roiContainerAspectRef.current,
+    });
+
+    try {
+      const response = await fetch('/api/tracking/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ box: sourceBox, label: 'manual selection' }),
+      });
+      const result = await response.json();
+      if (result.ok) {
+        await refreshRoiTracking();
+      } else {
+        setRoiTracking((current) => ({
+          ...current,
+          status: 'error',
+          message: result.error ?? 'Could not start tracking.',
+        }));
+      }
+    } catch {
+      setRoiTracking((current) => ({
+        ...current,
+        status: 'error',
+        message: 'Could not reach the tracking endpoint.',
+      }));
     }
   }
 
@@ -741,6 +872,7 @@ export default function App() {
     refreshSensors();
     refreshFirmwareStatus();
     refreshVision();
+    refreshRoiTracking();
     return () => {
       clearDriveHoldTimer();
       clearPendingCameraSend();
@@ -753,6 +885,7 @@ export default function App() {
   useInterval(refreshSensors, 1500);
   useInterval(refreshFirmwareStatus, FIRMWARE_STATUS_POLL_MS);
   useInterval(refreshVision, VISION_POLL_MS);
+  useInterval(refreshRoiTracking, TRACKING_POLL_MS);
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
@@ -916,9 +1049,19 @@ export default function App() {
         <div className="screen-grid">
           <section className="viewport-stack panel-block">
             <section className="viewport viewport-primary">
-              <div className="camera-frame-wrap" onClick={handleVideoClick} style={{ cursor: camera.available ? 'crosshair' : 'default' }}>
+              <div
+                ref={roiFrameRef}
+                className="camera-frame-wrap"
+                onClick={!roiSelectMode ? handleVideoClick : undefined}
+                onMouseDown={roiSelectMode ? handleRoiMouseDown : undefined}
+                onMouseMove={roiSelectMode ? handleRoiMouseMove : undefined}
+                onMouseUp={roiSelectMode ? handleRoiMouseUp : undefined}
+                style={{ cursor: camera.available ? 'crosshair' : 'default' }}
+              >
                 {camera.available ? <img className="camera-stream" src={cameraStreamUrl} alt="Robot tank wide camera stream" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }} /> : null}
                 {camera.available ? <VisionOverlay detections={vision.detections} flipped={flipped} /> : null}
+                {camera.available ? <TrackingOverlay tracking={roiTracking} flipped={flipped} /> : null}
+                {roiDrag ? <RoiSelectionOverlay drag={roiDrag} /> : null}
                 <div className="camera-overlay">
                   <div className="camera-hud-top">
                     <div className="status-stack status-stack-inline">
@@ -1016,6 +1159,45 @@ export default function App() {
                         : vision.detections.length > 0
                           ? `Locking: ${vision.detections[0].label}`
                           : 'Searching…'}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="tracking-bar roi-tracking-bar">
+                  <button
+                    className={`control small track-btn${roiSelectMode ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => {
+                      if (roiSelectMode) {
+                        setRoiSelectMode(false);
+                        setRoiDrag(null);
+                        roiDragRef.current = null;
+                      } else {
+                        setRoiSelectMode(true);
+                      }
+                    }}
+                  >
+                    {roiSelectMode ? 'Drawing…' : 'Track area'}
+                  </button>
+                  {(roiTracking.status === 'tracking' || roiTracking.status === 'lost') ? (
+                    <button
+                      className="control small secondary"
+                      type="button"
+                      onClick={stopRoiTracking}
+                    >
+                      Stop tracking
+                    </button>
+                  ) : null}
+                  {roiTracking.status === 'tracking' ? (
+                    <span className="status-detail tracking-label">
+                      {roiTracking.label ?? 'manual selection'}
+                    </span>
+                  ) : roiTracking.status === 'lost' ? (
+                    <span className="status-detail tracking-label" style={{ color: 'var(--warning)' }}>
+                      Tracking lost — select the object again.
+                    </span>
+                  ) : roiSelectMode ? (
+                    <span className="status-detail tracking-label">
+                      Drag a box over the camera feed.
                     </span>
                   ) : null}
                 </div>
@@ -1250,6 +1432,111 @@ function VisionOverlay({ detections, flipped, sourceAspect = DEFAULT_SOURCE_ASPE
           <circle cx={detection._projectedCenter.x} cy={detection._projectedCenter.y} r="0.01" />
         </g>
       ))}
+    </svg>
+  );
+}
+
+/**
+ * Renders the live tracking box returned by /api/tracking/status.
+ * Monitor-only — never feeds drive commands.
+ */
+function TrackingOverlay({ tracking, flipped, sourceAspect = DEFAULT_SOURCE_ASPECT }) {
+  const containerRef = useRef(null);
+  const [containerAspect, setContainerAspect] = useState(sourceAspect);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setContainerAspect(rect.width / rect.height);
+      }
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  if (!tracking || tracking.status !== 'tracking' || !tracking.box) {
+    return null;
+  }
+
+  const projected = projectNormalizedBox(tracking.box, { sourceAspect, containerAspect });
+  const cx = projected.x + projected.w / 2;
+  const cy = projected.y + projected.h / 2;
+
+  return (
+    <svg
+      ref={containerRef}
+      className="vision-overlay-svg"
+      viewBox="0 0 1 1"
+      preserveAspectRatio="none"
+      aria-label="Tracking overlay"
+      style={{ transform: flipped ? 'rotate(180deg)' : 'none' }}
+    >
+      <g data-testid="tracking-box" className="tracking-roi-box">
+        <rect
+          x={projected.x}
+          y={projected.y}
+          width={projected.w}
+          height={projected.h}
+          rx="0.008"
+          ry="0.008"
+          fill="none"
+          stroke="rgba(249,185,80,0.9)"
+          strokeWidth="0.006"
+          strokeDasharray="0.02 0.01"
+        />
+        <circle cx={cx} cy={cy} r="0.008" fill="rgba(249,185,80,0.7)" />
+        <text
+          x={projected.x}
+          y={Math.max(0.03, projected.y - 0.012)}
+          fill="rgba(249,185,80,0.9)"
+          fontSize="0.038"
+          fontWeight="700"
+          paintOrder="stroke"
+          stroke="rgba(4,10,18,0.88)"
+          strokeWidth="0.01"
+        >
+          {tracking.label ?? 'manual selection'}
+        </text>
+      </g>
+    </svg>
+  );
+}
+
+/**
+ * Renders the in-progress drag selection rectangle in container coords.
+ * Uses a simple absolute-positioned SVG so it sits on top of the camera feed.
+ */
+function RoiSelectionOverlay({ drag }) {
+  const x = Math.min(drag.x0, drag.x1);
+  const y = Math.min(drag.y0, drag.y1);
+  const w = Math.abs(drag.x1 - drag.x0);
+  const h = Math.abs(drag.y1 - drag.y0);
+
+  return (
+    <svg
+      className="vision-overlay-svg"
+      viewBox="0 0 1 1"
+      preserveAspectRatio="none"
+      aria-label="ROI selection"
+      data-testid="roi-selection-overlay"
+    >
+      <rect
+        x={x}
+        y={y}
+        width={w}
+        height={h}
+        fill="rgba(19,176,165,0.12)"
+        stroke="rgba(19,176,165,0.9)"
+        strokeWidth="0.005"
+        strokeDasharray="0.025 0.012"
+      />
     </svg>
   );
 }

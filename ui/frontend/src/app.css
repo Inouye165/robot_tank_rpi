@@ -518,6 +518,10 @@ output {
   padding: 0.25rem 0;
 }
 
+.roi-tracking-bar {
+  padding-top: 0;
+}
+
 .tracking-label {
   font-size: 0.75rem;
   opacity: 0.8;

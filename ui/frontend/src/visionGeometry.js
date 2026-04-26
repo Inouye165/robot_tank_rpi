@@ -84,3 +84,52 @@ export function projectNormalizedDetection(detection, options) {
     },
   };
 }
+
+/**
+ * Un-project container-space normalised coords back to source-image normalised coords.
+ * This is the inverse of projectNormalizedBox and is used to convert a drag selection
+ * made on the rendered container into source-image coordinates for the tracking backend.
+ *
+ * Coords that fall in the letterbox bars are clamped to [0, 1].
+ */
+export function unprojectNormalizedBox(box, { sourceAspect = DEFAULT_SOURCE_ASPECT, containerAspect } = {}) {
+  if (!box || typeof box !== 'object') {
+    return { x: 0, y: 0, w: 0, h: 0 };
+  }
+  const src = Number.isFinite(sourceAspect) && sourceAspect > 0 ? sourceAspect : DEFAULT_SOURCE_ASPECT;
+  const container = Number.isFinite(containerAspect) && containerAspect > 0 ? containerAspect : src;
+
+  let scaleX;
+  let scaleY;
+  let offsetX;
+  let offsetY;
+
+  if (Math.abs(container - src) < 1e-9) {
+    scaleX = 1;
+    scaleY = 1;
+    offsetX = 0;
+    offsetY = 0;
+  } else if (container > src) {
+    scaleX = src / container;
+    scaleY = 1;
+    offsetX = (1 - scaleX) / 2;
+    offsetY = 0;
+  } else {
+    scaleX = 1;
+    scaleY = container / src;
+    offsetX = 0;
+    offsetY = (1 - scaleY) / 2;
+  }
+
+  const sx = scaleX > 0 ? (box.x - offsetX) / scaleX : 0;
+  const sy = scaleY > 0 ? (box.y - offsetY) / scaleY : 0;
+  const sw = scaleX > 0 ? box.w / scaleX : 0;
+  const sh = scaleY > 0 ? box.h / scaleY : 0;
+
+  return {
+    x: Math.max(0, Math.min(1, sx)),
+    y: Math.max(0, Math.min(1, sy)),
+    w: Math.max(0, Math.min(1, sw)),
+    h: Math.max(0, Math.min(1, sh)),
+  };
+}
