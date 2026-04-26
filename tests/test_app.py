@@ -1,5 +1,6 @@
 import socket
 
+from server.app import build_serial_command
 from server.app import create_app
 from server.app import detect_port_conflict
 from server.config import Config
@@ -370,3 +371,113 @@ def test_detect_port_conflict_reports_busy_port():
         "code": "server-port-in-use",
         "message": f"Port {port} is already in use. Stop the other service or set TANK_SERVER_PORT to a free port.",
     }
+
+
+# ---------------------------------------------------------------------------
+# Regression tests below cover code paths not exercised by the HTTP tests above.
+# Each test maps to a real bug class identified during the codebase review.
+# ---------------------------------------------------------------------------
+
+
+def test_command_endpoint_forwards_backward_command_with_correct_verb():
+    """BACKWARD must serialize with the BACKWARD verb (not FORWARD).
+
+    Symmetric coverage with `test_command_endpoint_forwards_valid_command`; a
+    refactor that accidentally reused the forward branch for reverse would
+    silently brick the cockpit's reverse drive.
+    """
+    service = StubSerialService()
+    app = create_app(serial_service=service)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/command",
+        json={"command": "backward", "speed": 80, "duration_ms": 900},
+    )
+
+    assert response.status_code == 200
+    assert service.commands == ["BACKWARD 80 900"]
+
+
+def test_build_serial_command_handles_camera_now_branch():
+    """`camera_now` (CAMERANOW) is wired into the command map but had no test.
+
+    Click-to-calibrate uses this branch on the firmware side, and a regression
+    that fell through to `None` would surface only as a 400 in the cockpit.
+    """
+    config = Config()
+
+    serial_command = build_serial_command(
+        "camera_now", {"pan": 130, "tilt": 70}, config
+    )
+
+    assert serial_command == "CAMERANOW 130 70"
+
+
+def test_build_serial_command_returns_none_for_unknown_action():
+    """The HTTP layer relies on `None` to translate to a 400 'Unknown command'."""
+    config = Config()
+
+    assert build_serial_command("not_a_real_command", {}, config) is None
+
+
+def test_build_serial_command_drive_uses_config_defaults_when_payload_empty():
+    """Empty/None payload values must fall back to Config defaults rather than crash.
+
+    Guards `_coerce_int` returning the fallback for both ``None`` and ``""``
+    so the keyboard "press W with no slider input" path keeps working.
+    """
+    config = Config()
+
+    serial_command = build_serial_command(
+        "forward", {"speed": None, "duration_ms": ""}, config
+    )
+
+    assert serial_command == (
+        f"FORWARD {config.default_drive_speed} {config.default_drive_duration_ms}"
+    )
+
+
+def test_status_endpoint_exposes_camera_status_urls_with_loopback_substitution():
+    """When bound to 0.0.0.0, the status payload must rewrite the host to 127.0.0.1.
+
+    Returning a literal `0.0.0.0` URL would make the cockpit fetch fail in the
+    browser. This test pins the substitution behavior in `server/app.py`.
+    """
+    app = create_app(serial_service=StubSerialService())
+    config = app.config["TANK_CONFIG"]
+    client = app.test_client()
+
+    response = client.get("/api/status")
+    payload = response.get_json()
+
+    expected_host = "127.0.0.1" if config.server_host == "0.0.0.0" else config.server_host
+    assert payload["camera_status_url"] == (
+        f"http://{expected_host}:{config.camera_stream_port}/status"
+    )
+    assert payload["secondary_camera_status_url"] == (
+        f"http://{expected_host}:{config.secondary_camera_stream_port}/status"
+    )
+
+
+def test_config_auto_detect_prefers_acm_over_usb(monkeypatch):
+    """When both Uno-style ports exist, ACM must win.
+
+    The Uno R3 enumerates as `/dev/ttyACM*` on most kernels; if the priority
+    order in `_default_serial_port` is ever swapped, the controller would grab
+    an unrelated USB serial adapter on the same Pi.
+    """
+    monkeypatch.delenv("TANK_SERIAL_PORT", raising=False)
+
+    def fake_glob(pattern):
+        if pattern == "/dev/ttyACM*":
+            return ["/dev/ttyACM0", "/dev/ttyACM1"]
+        if pattern == "/dev/ttyUSB*":
+            return ["/dev/ttyUSB0"]
+        return []
+
+    monkeypatch.setattr("server.config.glob", fake_glob)
+
+    config = Config()
+
+    assert config.serial_port == "/dev/ttyACM0"

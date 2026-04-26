@@ -82,6 +82,35 @@ def test_parse_sensor_response_extracts_front_and_bottom_values():
     }
 
 
+def test_parse_sensor_response_rejects_truncated_payload():
+    """Short SENSORS lines must raise ValueError so the HTTP layer can return 503.
+
+    Previously only the happy path was covered; a regression that silently
+    returned partial dicts would surface as KeyErrors deep in the React UI.
+    """
+    try:
+        parse_sensor_response("SENSORS LINE 812 790 805")
+    except ValueError as exc:
+        assert "length" in str(exc).lower()
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected ValueError for truncated SENSORS payload")
+
+
+def test_parse_sensor_response_rejects_unexpected_marker():
+    """A correctly-sized line with the wrong marker tokens must still raise.
+
+    Protects against firmware drift where a future verb (e.g. `SENSORS2`)
+    would otherwise be parsed as if it were the legacy schema.
+    """
+    try:
+        parse_sensor_response("READING LINE 812 790 805 RANGE 24")
+    except ValueError as exc:
+        assert "format" in str(exc).lower()
+    else:  # pragma: no cover - defensive
+        raise AssertionError("Expected ValueError for unexpected SENSORS markers")
+
+
+
 def test_parse_status_response_extracts_camera_targets_and_build():
     status = parse_status_response(
         "STATUS SPEED 50 PAN 84 TARGET_PAN 120 TILT 90 TARGET_TILT 100 SONAR_US 2187 BUILD Apr_18_2026_07:55:42"
