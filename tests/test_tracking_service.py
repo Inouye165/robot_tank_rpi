@@ -16,8 +16,11 @@ from server.tracking_service import (
     STATUS_LOST,
     STATUS_NO_FRAME,
     STATUS_OPENCV_MISSING,
+    STATUS_TRACKER_UNAVAILABLE,
     STATUS_TRACKING,
     _validate_box,
+    _make_cv2_tracker,
+    available_tracker_apis,
 )
 from server.frame_reader import FakeFrameReader
 
@@ -169,6 +172,108 @@ def test_start_tracking_opencv_missing(monkeypatch):
 
     status = service.get_status()
     assert status["status"] == STATUS_OPENCV_MISSING
+
+
+# ---------------------------------------------------------------------------
+# start_tracking when cv2 is present but has no tracker APIs
+# ---------------------------------------------------------------------------
+
+def test_start_tracking_tracker_unavailable(monkeypatch):
+    """When cv2 imports but _make_cv2_tracker raises RuntimeError, return tracker_unavailable."""
+    frame = make_frame()
+    reader = FakeFrameReader(frame=frame)
+    service = TrackingService(frame_reader=reader)  # no injected tracker
+
+    # Patch _make_cv2_tracker to raise RuntimeError (simulates plain opencv-python)
+    import server.tracking_service as ts_mod
+    monkeypatch.setattr(ts_mod, "_make_cv2_tracker", lambda cv2: (_ for _ in ()).throw(
+        RuntimeError("No suitable OpenCV tracker found.")
+    ))
+
+    result = service.start_tracking({"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4})
+    assert result["ok"] is False
+    assert "contrib" in result["error"].lower() or "csrt" in result["error"].lower()
+
+    status = service.get_status()
+    assert status["status"] == STATUS_TRACKER_UNAVAILABLE
+    assert "contrib" in status["message"].lower() or "csrt" in status["message"].lower()
+
+
+def test_start_tracking_tracker_unavailable_http(monkeypatch):
+    """/api/tracking/start returns JSON 200 with ok=False, never a 500."""
+    import server.tracking_service as ts_mod
+    monkeypatch.setattr(ts_mod, "_make_cv2_tracker", lambda cv2: (_ for _ in ()).throw(
+        RuntimeError("No suitable OpenCV tracker found.")
+    ))
+
+    frame = make_frame()
+    reader = FakeFrameReader(frame=frame)
+    tracking_svc = TrackingService(frame_reader=reader)
+
+    app = create_app(tracking_service=tracking_svc)
+    client = app.test_client()
+    resp = client.post(
+        "/api/tracking/start",
+        json={"box": {"x": 0.1, "y": 0.2, "w": 0.3, "h": 0.4}, "label": "test"},
+    )
+    # Must be JSON 4xx, never a 500
+    assert resp.status_code != 500
+    assert resp.status_code < 500
+    data = resp.get_json()
+    assert data is not None, "response must be JSON, not HTML"
+    assert data["ok"] is False
+    assert "contrib" in data.get("error", "").lower() or "csrt" in data.get("error", "").lower()
+
+
+# ---------------------------------------------------------------------------
+# available_tracker_apis helper
+# ---------------------------------------------------------------------------
+
+def test_available_tracker_apis_empty_cv2():
+    """available_tracker_apis returns all-False for a stub with no tracker attrs."""
+    class _EmptyCv2:
+        pass
+
+    result = available_tracker_apis(_EmptyCv2())
+    assert isinstance(result, dict)
+    assert len(result) > 0
+    assert all(v is False for v in result.values())
+
+
+def test_available_tracker_apis_with_factory():
+    """available_tracker_apis returns True for a creator that exists."""
+    class _StubCv2:
+        def TrackerCSRT_create(self):  # noqa: N802
+            pass
+
+    result = available_tracker_apis(_StubCv2())
+    assert result["TrackerCSRT_create"] is True
+    assert result["TrackerKCF_create"] is False
+
+
+def test_available_tracker_apis_legacy_namespace():
+    """available_tracker_apis correctly traverses the legacy namespace."""
+    class _Legacy:
+        def TrackerKCF_create(self):  # noqa: N802
+            pass
+
+    class _StubCv2:
+        legacy = _Legacy()
+
+    result = available_tracker_apis(_StubCv2())
+    assert result["legacy.TrackerKCF_create"] is True
+    assert result["legacy.TrackerCSRT_create"] is False
+
+
+def test_make_cv2_tracker_raises_when_no_apis():
+    """_make_cv2_tracker raises RuntimeError for a bare cv2 stub."""
+    import pytest
+
+    class _EmptyCv2:
+        pass
+
+    with pytest.raises(RuntimeError, match="No suitable OpenCV tracker"):
+        _make_cv2_tracker(_EmptyCv2())
 
 
 # ---------------------------------------------------------------------------

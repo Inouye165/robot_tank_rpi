@@ -488,11 +488,25 @@ Status payload shape:
 }
 ```
 
-`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `no_frame`.
+`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `tracker_unavailable`, `no_frame`.
 
-**OpenCV optional**
+**OpenCV dependency**
 
-If `opencv-python` or `opencv-python-headless` is not installed, the endpoint returns `status: "opencv_missing"` instead of crashing. Everything else in the cockpit continues to work normally.
+Manual ROI tracking requires the **contrib** OpenCV package, which includes the CSRT/KCF tracker APIs. Plain `opencv-python` or `opencv-python-headless` does **not** include these.
+
+Install the correct package:
+
+```bash
+pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless
+pip install opencv-contrib-python-headless numpy
+```
+
+If `opencv-contrib-python-headless` is not installed:
+
+- `POST /api/tracking/start` returns JSON `{"ok": false, "error": "…"}` with `status: "tracker_unavailable"` — never a 500.
+- Everything else in the cockpit continues to work normally.
+
+You can verify which tracker APIs are present by running `scripts/check_vision_runtime.sh` on the Pi.
 
 
 

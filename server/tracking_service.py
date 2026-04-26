@@ -31,6 +31,7 @@ STATUS_TRACKING = "tracking"
 STATUS_LOST = "lost"
 STATUS_ERROR = "error"
 STATUS_OPENCV_MISSING = "opencv_missing"
+STATUS_TRACKER_UNAVAILABLE = "tracker_unavailable"
 STATUS_NO_FRAME = "no_frame"
 
 _SAMPLE_FPS = 5.0
@@ -58,12 +59,42 @@ def _validate_box(box: Any) -> Optional[str]:
     return None
 
 
+def available_tracker_apis(cv2: Any) -> dict[str, bool]:
+    """Return which OpenCV tracker creator names are available in *cv2*.
+
+    Checks both the top-level namespace (plain ``opencv-python``) and the
+    legacy namespace (``opencv-contrib-python-headless``).
+    """
+    names = [
+        "TrackerCSRT_create",
+        "TrackerKCF_create",
+        "TrackerMOSSE_create",
+        "legacy.TrackerCSRT_create",
+        "legacy.TrackerKCF_create",
+        "legacy.TrackerMOSSE_create",
+    ]
+    result: dict[str, bool] = {}
+    for name in names:
+        obj: Any = cv2
+        ok = True
+        for part in name.split("."):
+            if not hasattr(obj, part):
+                ok = False
+                break
+            obj = getattr(obj, part)
+        result[name] = ok
+    return result
+
+
 def _make_cv2_tracker(cv2: Any) -> Any:
     """Return the best available OpenCV tracker object.
 
-    Preference order: CSRT (most accurate) → KCF → MOSSE.
+    Checks both the top-level namespace (plain opencv-python) and the
+    legacy namespace (opencv-contrib-python-headless, OpenCV ≥ 4.5).
+    Preference order: CSRT → KCF → MOSSE.
     Raises RuntimeError if no suitable tracker API is found.
     """
+    # Top-level names (older contrib builds and some platform packages)
     for factory_name in ("TrackerCSRT_create", "TrackerKCF_create", "TrackerMOSSE_create"):
         factory = getattr(cv2, factory_name, None)
         if factory is not None:
@@ -71,14 +102,27 @@ def _make_cv2_tracker(cv2: Any) -> Any:
                 return factory()
             except Exception:  # pragma: no cover - cv2 API variations
                 continue
-    # Older cv2 legacy unified API
+    # cv2.legacy namespace (opencv-contrib ≥ 4.5)
+    legacy = getattr(cv2, "legacy", None)
+    if legacy is not None:
+        for factory_name in ("TrackerCSRT_create", "TrackerKCF_create", "TrackerMOSSE_create"):
+            factory = getattr(legacy, factory_name, None)
+            if factory is not None:
+                try:
+                    return factory()
+                except Exception:  # pragma: no cover
+                    continue
+    # Older unified Tracker.create API
     if hasattr(cv2, "Tracker"):
         for name in ("CSRT", "KCF", "MOSSE"):
             try:
                 return cv2.Tracker.create(name)  # type: ignore[attr-defined]
             except Exception:  # pragma: no cover
                 continue
-    raise RuntimeError("No suitable OpenCV tracker found in the installed cv2 version.")
+    raise RuntimeError(
+        "No suitable OpenCV tracker found. "
+        "Install opencv-contrib-python-headless to enable CSRT/KCF tracking."
+    )
 
 
 class FakeTracker:
@@ -198,10 +242,24 @@ class TrackingService:
                     box=None,
                     message=(
                         "OpenCV is not installed. "
-                        "Install opencv-python to enable manual ROI tracking."
+                        "Install opencv-contrib-python-headless to enable manual ROI tracking."
                     ),
                 )
                 return {"ok": False, "error": "OpenCV is not installed."}
+            except RuntimeError as exc:
+                msg = (
+                    "OpenCV is installed, but no CSRT/KCF tracker API is available. "
+                    "Install opencv-contrib-python-headless."
+                )
+                LOGGER.warning("Tracker unavailable: %s", exc)
+                self._update_cache(
+                    running=False,
+                    status=STATUS_TRACKER_UNAVAILABLE,
+                    label=label,
+                    box=None,
+                    message=msg,
+                )
+                return {"ok": False, "error": msg}
 
         # Convert normalised box → pixel rect for cv2
         h_px, w_px = frame.shape[:2]
