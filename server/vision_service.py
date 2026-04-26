@@ -106,6 +106,11 @@ class VisionService:
                 return
 
             try:
+                # NOTE: passing `source_url` per call is TEMPORARY. The future
+                # shape splits a frame reader (which owns the MJPEG
+                # connection) from a detector (which consumes already-decoded
+                # frames), so detectors stop reopening the stream every loop.
+                # See docs/FUTURE_IMPROVEMENTS.md and server/detectors.py.
                 raw_detections = self._detector.detect(
                     source_url=self._source_url,
                     confidence=self._config.vision_confidence,

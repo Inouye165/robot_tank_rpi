@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox } from './visionGeometry';
+
 const SERIAL_ERROR_HELP = {
   'serial-port-missing': 'Serial port missing. Check the USB cable and TANK_SERIAL_PORT.',
   'serial-port-busy': 'Serial port busy. Another process is already using the Arduino link.',
@@ -1102,31 +1104,64 @@ function SensorMetric({ label, value, unit = '', maximum, tone }) {
   );
 }
 
-function VisionOverlay({ detections, flipped }) {
+function VisionOverlay({ detections, flipped, sourceAspect = DEFAULT_SOURCE_ASPECT }) {
+  const containerRef = useRef(null);
+  const [containerAspect, setContainerAspect] = useState(sourceAspect);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || typeof ResizeObserver === 'undefined') {
+      return undefined;
+    }
+    const update = () => {
+      const rect = node.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        setContainerAspect(rect.width / rect.height);
+      }
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
   if (!Array.isArray(detections) || detections.length === 0) {
     return null;
   }
 
+  const projected = detections.map((detection) => {
+    const box = projectNormalizedBox(detection.box || { x: 0, y: 0, w: 0, h: 0 }, {
+      sourceAspect,
+      containerAspect,
+    });
+    const center = {
+      x: box.x + box.w / 2,
+      y: box.y + box.h / 2,
+    };
+    return { ...detection, _projectedBox: box, _projectedCenter: center };
+  });
+
   return (
     <svg
+      ref={containerRef}
       className="vision-overlay-svg"
       viewBox="0 0 1 1"
-      preserveAspectRatio="xMidYMid meet"
+      preserveAspectRatio="none"
       aria-label="Vision overlay"
       style={{ transform: flipped ? 'rotate(180deg)' : 'none' }}
     >
-      {detections.map((detection, index) => (
+      {projected.map((detection, index) => (
         <g key={`${detection.label}-${index}`} data-testid={`vision-box-${index}`} className={`vision-detection tone-${detection.category || 'object'}`}>
           <rect
-            x={detection.box.x}
-            y={detection.box.y}
-            width={detection.box.w}
-            height={detection.box.h}
+            x={detection._projectedBox.x}
+            y={detection._projectedBox.y}
+            width={detection._projectedBox.w}
+            height={detection._projectedBox.h}
             rx="0.01"
             ry="0.01"
           />
-          <text x={detection.box.x} y={Math.max(0.03, detection.box.y - 0.015)}>{`${detection.label} ${Math.round((detection.confidence || 0) * 100)}%`}</text>
-          <circle cx={detection.center?.x ?? detection.box.x + detection.box.w / 2} cy={detection.center?.y ?? detection.box.y + detection.box.h / 2} r="0.01" />
+          <text x={detection._projectedBox.x} y={Math.max(0.03, detection._projectedBox.y - 0.015)}>{`${detection.label} ${Math.round((detection.confidence || 0) * 100)}%`}</text>
+          <circle cx={detection._projectedCenter.x} cy={detection._projectedCenter.y} r="0.01" />
         </g>
       ))}
     </svg>

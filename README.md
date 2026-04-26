@@ -28,6 +28,7 @@ Pi-side local web controller for the robot tank. This project runs on the Raspbe
 - `MOTOR LEFT <signed_speed> <duration_ms>`
 - `MOTOR RIGHT <signed_speed> <duration_ms>`
 - `STATUS`
+- `SENSORS` (Pi-only request used by `/api/sensors`; firmware replies `SENSORS LINE <left> <middle> <right> SONAR <cm>`)
 - `STOP`
 - `PING`
 - `RAMPTEST`
@@ -63,6 +64,9 @@ The app reads configuration from environment variables.
 - `TANK_CAMERA_SENSOR_WIDTH` default: `4608`
 - `TANK_CAMERA_SENSOR_HEIGHT` default: `2592`
 - `TANK_CAMERA_STREAM_PORT` default: `8081`
+- `TANK_SECONDARY_CAMERA_STREAM_PORT` default: `8082`
+- `TANK_CAMERA_JPEG_QUALITY` default: `80` (used by `scripts/start_camera_stream.py`)
+- `TANK_CAMERA_FRAME_FORMAT` default: `RGB888` (used by `scripts/start_camera_stream.py`)
 - `TANK_VISION_ENABLED` default: `false`
 - `TANK_VISION_SOURCE_URL` default: `http://127.0.0.1:${TANK_CAMERA_STREAM_PORT}/stream.mjpg`
 - `TANK_VISION_MODEL_PATH` default: unset
@@ -70,7 +74,7 @@ The app reads configuration from environment variables.
 - `TANK_VISION_SAMPLE_FPS` default: `2`
 - `TANK_VISION_CONFIDENCE` default: `0.45`
 - `TANK_VISION_FRAME_WIDTH` default: `640`
-- `TANK_VISION_TARGET_LABELS` default: `person,dog`
+- `TANK_VISION_TARGET_LABELS` default: `tennis ball,traffic cone,marker` (monitor-only safety: people/dogs are detected and counted but are NOT target candidates by default)
 - `TANK_VISION_HAZARD_LABELS` default: `chair,backpack,suitcase,bottle,box,cup,sports ball,potted plant,traffic cone,unknown obstacle`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
@@ -122,7 +126,17 @@ The Flask server listens on `0.0.0.0`, so open it from another device on the sam
 http://<pi-ip>:5000/
 ```
 
-The live camera stream is served separately on `http://<pi-ip>:8081/stream.mjpg` and is embedded into the main page automatically.
+The primary (wide-angle) camera stream is served separately on `http://<pi-ip>:8081/stream.mjpg` and the auxiliary stream on `http://<pi-ip>:8082/stream.mjpg`. Both are embedded into the cockpit automatically.
+
+## API surface
+
+- `GET /` React PWA cockpit (Flask template loads the built Vite bundle)
+- `GET /sw.js` PWA service worker
+- `GET /api/status` serial link state plus startup issues and camera status URLs
+- `GET /api/sensors` parsed `SENSORS LINE <l> <m> <r> SONAR <cm>` snapshot
+- `GET /api/firmware/status` parsed `STATUS` snapshot from firmware
+- `GET /api/vision/status` and `GET /api/vision/detections` monitor-only vision payloads
+- `POST /api/command` send a mapped serial command (see `COMMANDS` in `server/app.py`)
 
 ## Vision monitoring
 
@@ -160,7 +174,9 @@ Example configuration:
 export TANK_VISION_ENABLED=true
 export TANK_VISION_MODEL_BACKEND=opencv_onnx
 export TANK_VISION_MODEL_PATH=$PWD/models/yolo-nano.onnx
-export TANK_VISION_TARGET_LABELS=person,dog,tennis ball
+# Safe markers only by default. Add person/dog ONLY if you understand the
+# implications; this phase is still monitor-only and does not act on targets.
+export TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
 ```
 
 If OpenCV/model support is not installed, leave `TANK_VISION_MODEL_BACKEND=disabled` and the cockpit will stay in monitor-only standby.
@@ -221,7 +237,7 @@ If the camera is connected but the stream panel still reports unavailable, check
 
 ## Raspberry Pi 5 camera note
 
-This Pi currently has `camera_auto_detect=1` in `/boot/firmware/config.txt`, so the first camera is configured through Raspberry Pi OS auto-detection, not through an explicit `dtoverlay=` line. For an IMX708-based Arducam Camera Module 3 compatible camera, that is the correct starting point.
+This Pi currently runs dual cameras (IMX219 on index 0, IMX708 on index 1). `/boot/firmware/config.txt` is configured with `camera_auto_detect=0` and the explicit overlays `dtoverlay=imx708` and `dtoverlay=imx219,cam0`. The primary camera service points `TANK_CAMERA_INDEX=1` at the IMX708 wide-angle module, and the secondary service points `TANK_CAMERA_INDEX=0` at the IMX219.
 
 On Raspberry Pi 5, the camera/display connectors are not selected with `disp1` for libcamera or Picamera2 camera capture. If you are moving the camera to the other MIPI connector:
 
@@ -272,10 +288,14 @@ python3 -m pytest
 
 ## Project layout
 
-- `server/` Flask app, config, and serial service integration
-- `ui/` plain HTML, CSS, and JavaScript for the local controller
+- `server/` Flask app, configuration, serial service, and monitor-only vision service
+- `ui/frontend/` React + Vite source for the PWA cockpit (`src/App.jsx`, `src/main.jsx`, `src/app.css`, `src/App.test.jsx`)
+- `ui/static/` static assets and built bundle (`dist/` is produced by `npm run build`); also hosts the service worker `sw.js`
+- `ui/templates/index.html` Flask template that loads the built React bundle and injects `cameraStreamPort`/`secondaryCameraStreamPort`
+- `scripts/` launcher and systemd units: `start_controller.sh`, `start_camera_stream.py`, `robot-tank-rpi.service`, `robot-tank-camera.service`, `robot-tank-camera-secondary.service`
+- `tests/` Python tests (Flask app, serial service, vision service)
 - `serial/` notes for the Arduino serial protocol
-- `camera/` reserved for a future streaming phase
+- `camera/` notes for the camera streaming setup
 - `docs/` project notes and setup references
 
 ## Firmware alignment note

@@ -172,6 +172,41 @@ describe('App camera controls', () => {
     expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 111, tilt: 90 });
   });
 
+  // Regression: the click-to-center math multiplies pan by `flipMultiplier`
+  // when the cockpit's "Flip Cam" toggle is off. Without this test, swapping
+  // the sign in App.jsx would silently invert aiming while the default
+  // (flipped) test above continued to pass.
+  it('click-to-center inverts pan delta when the flip toggle is off', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
+
+    // Default state is flipped=true; toggling off exercises the
+    // `flipMultiplier === 1` branch that the existing test above does not cover.
+    fireEvent.click(screen.getByRole('button', { name: 'Flip Cam' }));
+    calls.length = 0;
+
+    const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
+    frame.getBoundingClientRect = () => ({
+      left: 0,
+      top: 0,
+      width: 400,
+      height: 300,
+      right: 400,
+      bottom: 300,
+    });
+
+    // Same click coordinates as the flipped test (right side of viewport).
+    // With flip off the pan delta must invert: 90 - 21 = 69 (vs 111 when flipped).
+    fireEvent.click(frame, { clientX: 300, clientY: 150 });
+    await waitFor(() => expect(commandCalls(calls)).toHaveLength(1));
+
+    const cameraCalls = commandCalls(calls);
+    expect(cameraCalls).toHaveLength(1);
+    expect(cameraCalls[0]).toEqual({ command: 'camera', pan: 69, tilt: 90 });
+  });
+
   it('center button sends one CENTERCAM request', async () => {
     const { calls } = installFetchMock();
     render(<App />);

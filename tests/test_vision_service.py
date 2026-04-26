@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from server.app import create_app
 from server.config import Config
+from server.detectors import Detector, FakeDetector
 from server.vision_service import VisionService
 
 
@@ -15,7 +16,9 @@ def make_config(monkeypatch, **overrides):
         "TANK_VISION_SAMPLE_FPS": "2",
         "TANK_VISION_CONFIDENCE": "0.45",
         "TANK_VISION_FRAME_WIDTH": "640",
-        "TANK_VISION_TARGET_LABELS": "person,dog,tennis ball",
+        # Tests that need person/dog as targets opt in explicitly. The
+        # safe production default is `tennis ball,traffic cone,marker`.
+        "TANK_VISION_TARGET_LABELS": "tennis ball,traffic cone,marker",
         "TANK_VISION_HAZARD_LABELS": "chair,backpack,suitcase,bottle,box,cup,sports ball,potted plant,traffic cone,unknown obstacle",
     }
     defaults.update(overrides)
@@ -38,7 +41,8 @@ def test_vision_service_disabled_status(monkeypatch):
 
 
 def test_detection_result_shape(monkeypatch):
-    service = VisionService(make_config(monkeypatch))
+    # Opt person back in for this shape test only.
+    service = VisionService(make_config(monkeypatch, TANK_VISION_TARGET_LABELS="person,dog,tennis ball"))
 
     payload = service.classify_detection(
         {
@@ -57,6 +61,56 @@ def test_detection_result_shape(monkeypatch):
         "is_hazard": False,
         "is_target": True,
     }
+
+
+def test_person_is_not_target_by_default(monkeypatch):
+    """Safety regression: person must be detected and categorized as 'person'
+    but must NOT be flagged as a target candidate under the default config.
+    """
+    service = VisionService(make_config(monkeypatch))
+
+    payload = service.classify_detection(
+        {
+            "label": "person",
+            "confidence": 0.92,
+            "box": {"x": 0.2, "y": 0.3, "w": 0.2, "h": 0.4},
+        }
+    )
+
+    assert payload["category"] == "person"
+    assert payload["is_target"] is False
+
+
+def test_dog_is_not_target_by_default(monkeypatch):
+    """Safety regression: dog must be counted but not targetable by default."""
+    service = VisionService(make_config(monkeypatch))
+
+    payload = service.classify_detection(
+        {
+            "label": "dog",
+            "confidence": 0.81,
+            "box": {"x": 0.4, "y": 0.4, "w": 0.2, "h": 0.2},
+        }
+    )
+
+    assert payload["category"] == "dog"
+    assert payload["is_target"] is False
+
+
+def test_configured_target_label_becomes_target(monkeypatch):
+    """A configured marker label (default: 'tennis ball') must be is_target=True."""
+    service = VisionService(make_config(monkeypatch))
+
+    payload = service.classify_detection(
+        {
+            "label": "tennis ball",
+            "confidence": 0.7,
+            "box": {"x": 0.5, "y": 0.5, "w": 0.05, "h": 0.05},
+        }
+    )
+
+    assert payload["is_target"] is True
+    assert payload["category"] == "target"
 
 
 def test_hazard_classification_heuristic(monkeypatch):
@@ -122,7 +176,14 @@ def test_vision_status_endpoint_returns_service_snapshot(monkeypatch):
 
 
 def test_vision_detections_endpoint_returns_classified_results(monkeypatch):
-    vision_service = VisionService(make_config(monkeypatch, TANK_VISION_ENABLED="true"))
+    vision_service = VisionService(
+        make_config(
+            monkeypatch,
+            TANK_VISION_ENABLED="true",
+            # Opt person/dog back in to exercise the multi-target endpoint shape.
+            TANK_VISION_TARGET_LABELS="person,dog,tennis ball",
+        )
+    )
     vision_service.update_from_candidates(
         [
             {
@@ -155,3 +216,51 @@ def test_vision_detections_endpoint_returns_classified_results(monkeypatch):
     assert len(payload["hazards"]) == 1
     assert len(payload["targets"]) == 2
     assert payload["detections"][0]["center"] == {"x": 0.2, "y": 0.425}
+
+def test_fake_detector_satisfies_detector_protocol():
+    fake = FakeDetector()
+    assert isinstance(fake, Detector)
+
+
+def test_vision_service_runs_with_injected_fake_detector(monkeypatch):
+    """Inject a FakeDetector and prove update_from_candidates updates state.
+
+    This intentionally drives the public update path used by the worker loop
+    rather than spinning a background thread (so the test stays fast and
+    deterministic).
+    """
+    fake = FakeDetector(
+        candidates=[
+            {
+                "label": "tennis ball",
+                "confidence": 0.7,
+                "box": {"x": 0.5, "y": 0.5, "w": 0.05, "h": 0.05},
+            },
+            {
+                "label": "person",
+                "confidence": 0.9,
+                "box": {"x": 0.1, "y": 0.2, "w": 0.2, "h": 0.4},
+            },
+        ]
+    )
+    config = make_config(monkeypatch)
+    service = VisionService(config, detector=fake)
+
+    candidates = fake.detect(
+        source_url=service.get_status()["source_url"],
+        confidence=config.vision_confidence,
+        frame_width=config.vision_frame_width,
+    )
+    service.update_from_candidates(candidates)
+
+    snapshot = service.get_status()
+
+    assert fake.call_count == 1
+    assert fake.last_kwargs["source_url"] == "http://127.0.0.1:8081/stream.mjpg"
+    assert snapshot["running"] is True
+    assert snapshot["people_count"] == 1
+    # Default config: tennis ball is a target, person is not.
+    assert len(snapshot["targets"]) == 1
+    assert snapshot["targets"][0]["label"] == "tennis ball"
+    person_entry = next(d for d in snapshot["detections"] if d["label"] == "person")
+    assert person_entry["is_target"] is False
