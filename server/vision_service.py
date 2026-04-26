@@ -298,10 +298,6 @@ class VisionService:
     def update_from_candidates(self, detections: list[DetectionCandidate | dict[str, Any]]) -> None:
         classified = [self.classify_detection(detection) for detection in detections]
         now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-        hazards = [item for item in classified if item["is_hazard"]]
-        targets = [item for item in classified if item["is_target"]]
-        people_count = sum(1 for item in classified if item["category"] == "person")
-        dog_count = sum(1 for item in classified if item["category"] == "dog")
         backend = self._config.vision_model_backend or "disabled"
         if backend == "fake":
             active_message = (
@@ -311,6 +307,7 @@ class VisionService:
         else:
             active_message = "Vision monitoring active in monitor-only mode."
         with self._lock:
+            # Always update liveness / connectivity fields.
             self._cache.update(
                 {
                     "running": self._detector is not None,
@@ -319,17 +316,29 @@ class VisionService:
                         self._frame_reader.connected if self._frame_reader is not None else False
                     ),
                     "last_frame_time": now,
-                    "last_detection_time": now,
                     "fps": float(self._config.vision_sample_fps),
-                    "detections": classified,
-                    "detections_count": len(classified),
-                    "people_count": people_count,
-                    "dog_count": dog_count,
-                    "hazards": hazards,
-                    "targets": targets,
                     "message": active_message,
                 }
             )
+            # Only replace detection results when this frame actually found something.
+            # This keeps the last-known detections alive between sparse YOLO frames so
+            # that the tracking loop has a stable target to follow.
+            if classified:
+                hazards = [item for item in classified if item["is_hazard"]]
+                targets = [item for item in classified if item["is_target"]]
+                people_count = sum(1 for item in classified if item["category"] == "person")
+                dog_count = sum(1 for item in classified if item["category"] == "dog")
+                self._cache.update(
+                    {
+                        "last_detection_time": now,
+                        "detections": classified,
+                        "detections_count": len(classified),
+                        "people_count": people_count,
+                        "dog_count": dog_count,
+                        "hazards": hazards,
+                        "targets": targets,
+                    }
+                )
 
     def _is_hazard_label(self, label: str) -> bool:
         return label in self._hazard_labels
