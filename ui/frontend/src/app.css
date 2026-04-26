@@ -499,6 +499,34 @@ output {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+.track-btn {
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.track-btn.active {
+  background: rgba(19, 176, 165, 0.3);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tracking-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.roi-tracking-bar {
+  padding-top: 0;
+}
+
+.tracking-label {
+  font-size: 0.75rem;
+  opacity: 0.8;
+}
+
 .aux-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

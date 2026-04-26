@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox, projectNormalizedDetection } from './visionGeometry';
+import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox, projectNormalizedDetection, unprojectNormalizedBox } from './visionGeometry';
 
 const SAMPLE_BOX = { x: 0.1, y: 0.2, w: 0.4, h: 0.5 };
 
@@ -99,5 +99,58 @@ describe('projectNormalizedDetection', () => {
     // Original metadata preserved.
     expect(projected.label).toBe('tennis ball');
     expect(projected.confidence).toBe(0.7);
+  });
+});
+
+describe('unprojectNormalizedBox', () => {
+  it('is the inverse of projectNormalizedBox for matching aspects', () => {
+    const original = { x: 0.1, y: 0.2, w: 0.4, h: 0.5 };
+    const projected = projectNormalizedBox(original, { sourceAspect: 16 / 9, containerAspect: 16 / 9 });
+    const unprojected = unprojectNormalizedBox(projected, { sourceAspect: 16 / 9, containerAspect: 16 / 9 });
+
+    expect(unprojected.x).toBeCloseTo(original.x, 5);
+    expect(unprojected.y).toBeCloseTo(original.y, 5);
+    expect(unprojected.w).toBeCloseTo(original.w, 5);
+    expect(unprojected.h).toBeCloseTo(original.h, 5);
+  });
+
+  it('is the inverse of projectNormalizedBox for wide container (horizontal letterbox)', () => {
+    const original = { x: 0.1, y: 0.2, w: 0.4, h: 0.5 };
+    const opts = { sourceAspect: 16 / 9, containerAspect: 32 / 9 };
+    const projected = projectNormalizedBox(original, opts);
+    const unprojected = unprojectNormalizedBox(projected, opts);
+
+    expect(unprojected.x).toBeCloseTo(original.x, 5);
+    expect(unprojected.y).toBeCloseTo(original.y, 5);
+    expect(unprojected.w).toBeCloseTo(original.w, 5);
+    expect(unprojected.h).toBeCloseTo(original.h, 5);
+  });
+
+  it('is the inverse of projectNormalizedBox for tall container (vertical letterbox)', () => {
+    const original = { x: 0.1, y: 0.2, w: 0.4, h: 0.3 };
+    const opts = { sourceAspect: 16 / 9, containerAspect: 16 / 18 };
+    const projected = projectNormalizedBox(original, opts);
+    const unprojected = unprojectNormalizedBox(projected, opts);
+
+    expect(unprojected.x).toBeCloseTo(original.x, 5);
+    expect(unprojected.y).toBeCloseTo(original.y, 5);
+    expect(unprojected.w).toBeCloseTo(original.w, 5);
+    expect(unprojected.h).toBeCloseTo(original.h, 5);
+  });
+
+  it('clamps coords from letterbox bars to [0, 1]', () => {
+    // A selection rect starting in the left letterbox bar (x < offsetX)
+    // should be clamped to 0.
+    const opts = { sourceAspect: 16 / 9, containerAspect: 32 / 9 };
+    const inBarBox = { x: 0.0, y: 0.0, w: 0.1, h: 0.5 };
+    const unprojected = unprojectNormalizedBox(inBarBox, opts);
+
+    expect(unprojected.x).toBeGreaterThanOrEqual(0);
+    expect(unprojected.x).toBeLessThanOrEqual(1);
+  });
+
+  it('returns a zeroed box for invalid input', () => {
+    const result = unprojectNormalizedBox(null);
+    expect(result).toEqual({ x: 0, y: 0, w: 0, h: 0 });
   });
 });

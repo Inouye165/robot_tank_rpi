@@ -267,6 +267,90 @@ If the Uno is not on `/dev/ttyACM0`, check the available device nodes with `ls /
 
 This repo includes a small launcher script at `scripts/start_controller.sh` that auto-detects the first available Uno serial device from `/dev/ttyUSB*` or `/dev/ttyACM*` and then starts the Flask controller.
 
+### Runtime configuration via `.env`
+
+`scripts/start_controller.sh` loads a local `.env` file at the repo root if
+one exists, before applying defaults. This is how the systemd unit picks up
+operator-supplied values for the vision backend (otherwise it would start
+with vision disabled).
+
+- The file lives at `/home/ron/repos/robot_tank_rpi/.env`.
+- It is **gitignored**. Do not commit secrets or local model paths.
+- `.env.example` documents every supported key.
+- The script applies safe defaults for any value the `.env` does not set,
+  so vision stays **disabled** unless explicitly enabled. People and dogs
+  remain non-target by default. No autonomous movement, no drive commands
+  from vision.
+
+Example `.env` for enabling the real backend on the Pi:
+
+```bash
+TANK_VISION_ENABLED=true
+TANK_VISION_MODEL_BACKEND=opencv_onnx
+TANK_VISION_MODEL_PATH=/home/ron/repos/robot_tank_rpi/models/yolo-nano.onnx
+TANK_VISION_SOURCE_URL=http://127.0.0.1:8081/stream.mjpg
+TANK_VISION_SAMPLE_FPS=2
+TANK_VISION_CONFIDENCE=0.45
+TANK_VISION_FRAME_WIDTH=640
+TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
+```
+
+After changing `.env`, restart the service:
+
+```bash
+sudo systemctl restart robot-tank-rpi.service
+```
+
+### Manual UI test mode (`fake` backend)
+
+For verifying the cockpit overlay/state machine without a real ONNX model:
+
+```bash
+TANK_VISION_ENABLED=true
+TANK_VISION_MODEL_BACKEND=fake
+```
+
+This emits a couple of synthetic detections, is **clearly labelled
+FAKE/TEST in `/api/vision/status`**, and never sends drive commands.
+Switch back to `disabled` or `opencv_onnx` for normal operation.
+
+### Verifying runtime config on the Pi
+
+The repo ships a small diagnostic script at
+`scripts/check_vision_runtime.sh`. It prints the systemd state, recent
+journal lines, the live `/api/vision/status` and `/api/vision/detections`
+payloads, the camera stream HEAD response, an OpenCV import check using
+the project venv, and whether the configured model file exists.
+
+```bash
+bash /home/ron/repos/robot_tank_rpi/scripts/check_vision_runtime.sh
+```
+
+You can also run the underlying commands by hand:
+
+```bash
+# Service state and recent logs
+systemctl status robot-tank-rpi.service
+sudo journalctl -u robot-tank-rpi.service -n 100 --no-pager
+
+# Live vision payloads (controller default port 5000)
+curl -sS http://127.0.0.1:5000/api/vision/status | jq .
+curl -sS http://127.0.0.1:5000/api/vision/detections | jq .
+
+# Camera stream is reachable (primary wide cam)
+curl -I http://127.0.0.1:8081/stream.mjpg
+
+# OpenCV import using the project venv
+/home/ron/repos/robot_tank_rpi/.venv/bin/python3 -c "import cv2; print(cv2.__version__)"
+
+# Model file exists
+ls -la "$TANK_VISION_MODEL_PATH"
+```
+
+Expected results when the backend is healthy: `enabled=true`,
+`model_loaded=true`, `stream_connected=true`, and the cockpit Vision pill
+reads **Vision active**.
+
 The camera stream services use system Python so they can access `picamera2` even though the main app runs inside the project virtualenv. Their launcher is `scripts/start_camera_stream.py`, with `scripts/robot-tank-camera.service` for the primary wide-angle feed and `scripts/robot-tank-camera-secondary.service` for the smaller auxiliary feed.
 
 The primary camera unit defaults to `TANK_CAMERA_INDEX=1` so the cockpit's main viewport stays on the IMX708 wide-angle camera when both cameras are present. The secondary camera unit defaults to `TANK_CAMERA_INDEX=0` and serves the smaller auxiliary viewport.
@@ -350,7 +434,67 @@ The web UI exposes:
 - `Center Camera`, `Ping`, `Slow Ramp Test`, and a compact firmware status panel showing build plus current/target pan and tilt
 - installable PWA metadata so the control screen can be launched in standalone mode from a phone or tablet
 
-## Run tests
+## Manual area tracking
+
+The cockpit includes a monitor-only manual ROI (region of interest) tracker. This lets you select any visual patch on the live camera feed and have the backend follow it across frames — even if the app does not know what the object is.
+
+**How it works**
+
+1. Click **Track area** in the Turret panel.
+2. Drag a rectangle around anything on the wide camera view — a fingertip, a toy, a coloured marker.
+3. On release, the app sends the normalised bounding box to `POST /api/tracking/start`.
+4. The backend initialises an OpenCV tracker (CSRT preferred, falling back to KCF) on the current camera frame and starts a background loop that updates the box at roughly 5 FPS.
+5. The cockpit overlays a yellow dashed box on the camera feed and labels it with the selection name.
+6. Click **Stop tracking** to end the session.
+
+**This is tracking, not object detection.** The tracker follows a specific visual patch by appearance, not by recognising what the object is. It works on any visual region you select.
+
+**Limits**
+
+- Occlusion: if the object is fully hidden behind another object, the tracker will lose it.
+- Blur or lighting change: fast motion blur or sudden lighting shifts can cause the tracker to drift or lose the target.
+- Object leaving frame: once the object exits the camera view, the tracker reports `status: "lost"`.
+- Re-entry: the tracker does not re-acquire the object after losing it. Select the object again to restart.
+
+When the tracker loses the target it reports `status: "lost"` and clears the box. The UI shows: **Tracking lost — select the object again.** No stale box is displayed.
+
+**Safety**
+
+- Monitor-only. Tracking output is display-only.
+- The backend never sends serial or drive commands from tracking.
+- The tank does not move autonomously.
+- People and dogs are not navigation targets.
+
+**API**
+
+- `GET /api/tracking/status` — current tracking state
+- `POST /api/tracking/start` — `{"box": {"x": …, "y": …, "w": …, "h": …}, "label": "manual selection"}` with normalised 0–1 coords
+- `POST /api/tracking/stop` — stop and reset
+- `POST /api/tracking/reset` — alias for stop
+
+Status payload shape:
+
+```json
+{
+  "enabled": true,
+  "running": true,
+  "status": "tracking",
+  "label": "manual selection",
+  "box": { "x": 0.25, "y": 0.30, "w": 0.15, "h": 0.20 },
+  "confidence": null,
+  "last_update_time": "2026-04-26T12:00:00Z",
+  "fps": 5.0,
+  "message": "Tracking manual selection"
+}
+```
+
+`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `no_frame`.
+
+**OpenCV optional**
+
+If `opencv-python` or `opencv-python-headless` is not installed, the endpoint returns `status: "opencv_missing"` instead of crashing. Everything else in the cockpit continues to work normally.
+
+
 
 ```bash
 source .venv/bin/activate
