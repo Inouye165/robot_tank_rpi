@@ -543,8 +543,8 @@ describe('ROI tracking UI', () => {
     });
 
     fireEvent.mouseDown(frame, { clientX: 100, clientY: 80 });
-    fireEvent.mouseMove(frame, { clientX: 300, clientY: 200 });
-    fireEvent.mouseUp(frame, { clientX: 300, clientY: 200 });
+    fireEvent.mouseMove(document, { clientX: 300, clientY: 200 });
+    fireEvent.mouseUp(document, { clientX: 300, clientY: 200 });
 
     await waitFor(() => {
       const trackingCalls = calls.filter((c) => c.url.endsWith('/api/tracking/start'));
@@ -651,8 +651,8 @@ describe('ROI tracking UI', () => {
 
     // Tiny drag — start and end at almost the same point
     fireEvent.mouseDown(frame, { clientX: 100, clientY: 80 });
-    fireEvent.mouseMove(frame, { clientX: 101, clientY: 81 });
-    fireEvent.mouseUp(frame, { clientX: 101, clientY: 81 });
+    fireEvent.mouseMove(document, { clientX: 101, clientY: 81 });
+    fireEvent.mouseUp(document, { clientX: 101, clientY: 81 });
 
     await act(async () => {
       await new Promise((resolve) => window.setTimeout(resolve, 50));

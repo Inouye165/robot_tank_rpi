@@ -488,21 +488,28 @@ export default function App() {
     const drag = { x0: x, y0: y, x1: x, y1: y };
     roiDragRef.current = drag;
     setRoiDrag(drag);
+
+    // Attach move/up to document so drag works even when cursor leaves the element.
+    function onDocMove(e) {
+      if (!roiDragRef.current) return;
+      const cx = clamp((e.clientX - rect.left) / rect.width, 0, 1);
+      const cy = clamp((e.clientY - rect.top) / rect.height, 0, 1);
+      const updated = { ...roiDragRef.current, x1: cx, y1: cy };
+      roiDragRef.current = updated;
+      setRoiDrag(updated);
+    }
+
+    function onDocUp() {
+      document.removeEventListener('mousemove', onDocMove);
+      document.removeEventListener('mouseup', onDocUp);
+      finishRoiDrag();
+    }
+
+    document.addEventListener('mousemove', onDocMove);
+    document.addEventListener('mouseup', onDocUp);
   }
 
-  function handleRoiMouseMove(event) {
-    if (!roiDragRef.current) return;
-    event.preventDefault();
-    const el = roiFrameRef.current;
-    const rect = el ? el.getBoundingClientRect() : { left: 0, top: 0, width: 1, height: 1 };
-    const x = clamp((event.clientX - rect.left) / rect.width, 0, 1);
-    const y = clamp((event.clientY - rect.top) / rect.height, 0, 1);
-    const drag = { ...roiDragRef.current, x1: x, y1: y };
-    roiDragRef.current = drag;
-    setRoiDrag(drag);
-  }
-
-  async function handleRoiMouseUp(event) {
+  async function finishRoiDrag() {
     const drag = roiDragRef.current;
     roiDragRef.current = null;
     setRoiDrag(null);
@@ -1054,9 +1061,7 @@ export default function App() {
                 className="camera-frame-wrap"
                 onClick={!roiSelectMode ? handleVideoClick : undefined}
                 onMouseDown={roiSelectMode ? handleRoiMouseDown : undefined}
-                onMouseMove={roiSelectMode ? handleRoiMouseMove : undefined}
-                onMouseUp={roiSelectMode ? handleRoiMouseUp : undefined}
-                style={{ cursor: camera.available ? 'crosshair' : 'default' }}
+                style={{ cursor: roiSelectMode ? 'crosshair' : (camera.available ? 'default' : 'default') }}
               >
                 {camera.available ? <img className="camera-stream" src={cameraStreamUrl} alt="Robot tank wide camera stream" style={{ transform: flipped ? 'rotate(180deg)' : 'none' }} /> : null}
                 {camera.available ? <VisionOverlay detections={vision.detections} flipped={flipped} /> : null}
