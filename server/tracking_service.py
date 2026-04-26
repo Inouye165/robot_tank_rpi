@@ -190,7 +190,7 @@ class TrackingService:
         # Follow-mode state
         self._follow_enabled: bool = False
         self._pan_invert: bool = False  # set True if gimbal moves the wrong way on pan
-        self._tilt_invert: bool = False
+        self._tilt_invert: bool = True   # tilt servo geometry is inverted on this rig
         self._pan_deg: float = float(_SERVO_CENTER)
         self._tilt_deg: float = float(_SERVO_CENTER)
         self._cache: dict[str, Any] = self._build_idle_cache()
