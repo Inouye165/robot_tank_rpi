@@ -390,7 +390,7 @@ export default function App() {
     try {
       const response = await fetch('/api/vision/detections');
       const payload = await response.json();
-      setVision({
+      const newVision = {
         enabled: Boolean(payload.enabled),
         running: Boolean(payload.running),
         source_url: payload.source_url ?? null,
@@ -411,7 +411,11 @@ export default function App() {
         hazards: Array.isArray(payload.hazards) ? payload.hazards : [],
         targets: Array.isArray(payload.targets) ? payload.targets : [],
         message: payload.message || defaultVision.message,
-      });
+      };
+      setVision(newVision);
+      // Run tracking synchronously with the freshest data instead of relying
+      // on a separate interval that may read a stale visionRef.
+      trackingTick(newVision);
     } catch {
       setVision({
         ...defaultVision,
@@ -690,9 +694,10 @@ export default function App() {
     await sendDirectCommand('center_camera', 'Center Camera');
   }
 
-  function trackingTick() {
+  // Accepts a vision snapshot directly so it can be called with fresh data
+  // from refreshVision without waiting for a separate interval or ref sync.
+  function trackingTick(v) {
     if (!trackingEnabledRef.current) return;
-    const v = visionRef.current;
     if (!v.running || v.detections.length === 0) return;
 
     // Prefer target-labelled detections; fall back to highest-confidence any.
@@ -748,7 +753,6 @@ export default function App() {
   useInterval(refreshSensors, 1500);
   useInterval(refreshFirmwareStatus, FIRMWARE_STATUS_POLL_MS);
   useInterval(refreshVision, VISION_POLL_MS);
-  useInterval(trackingTick, VISION_POLL_MS);
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
