@@ -261,6 +261,7 @@ export default function App() {
   const cameraSendTimerRef = useRef(null);
   const trackingEnabledRef = useRef(false);
   const visionRef = useRef(defaultVision);
+  const flippedRef = useRef(true); // matches useState(true) default
   const appConfig = useMemo(() => getAppConfig(), []);
   const cameraBaseUrl = useMemo(
     () => `${window.location.protocol}//${window.location.hostname}:${appConfig.cameraStreamPort}`,
@@ -302,6 +303,7 @@ export default function App() {
 
   useEffect(() => { visionRef.current = vision; }, [vision]);
   useEffect(() => { trackingEnabledRef.current = trackingEnabled; }, [trackingEnabled]);
+  useEffect(() => { flippedRef.current = flipped; }, [flipped]);
 
   async function refreshStatus() {
     try {
@@ -699,8 +701,10 @@ export default function App() {
 
     const cx = best.center?.x ?? (best.box ? best.box.x + best.box.w / 2 : 0.5);
     const cy = best.center?.y ?? (best.box ? best.box.y + best.box.h / 2 : 0.5);
-    const errorX = cx - 0.5;
-    const errorY = cy - 0.5;
+    // Apply the same flip as the click handler so tracking direction matches.
+    const flipMultiplier = flippedRef.current ? -1 : 1;
+    const errorX = (cx - 0.5) * flipMultiplier;
+    const errorY = (cy - 0.5) * flipMultiplier;
 
     // Dead-zone: don't move the servo when the target is already centred.
     if (Math.abs(errorX) < TRACKING_DEAD_ZONE && Math.abs(errorY) < TRACKING_DEAD_ZONE) return;
