@@ -98,6 +98,11 @@ const CAMERA_HFOV_DEG = 114;
 const CAMERA_VFOV_DEG = 81;
 const CAMERA_NATIVE_ASPECT = 16 / 9;
 const CAMERA_NUDGE_DEG = 5;
+// Camera-tracking constants. DEAD_ZONE prevents servo jitter when the
+// detected object is already near-centre (in normalized 0-1 coords).
+const TRACKING_DEAD_ZONE = 0.06;  // ~7 deg; no move inside this radius
+const TRACKING_PAN_GAIN = 0.7;   // fraction of full-error correction per tick
+const TRACKING_TILT_GAIN = 0.7;
 const DRIVE_HOLD_MIN_PULSE_MS = 80;
 const DRIVE_HOLD_MIN_REPEAT_MS = 50;
 const DRIVE_HOLD_MAX_REPEAT_MS = 250;
@@ -244,6 +249,7 @@ export default function App() {
   const [installPrompt, setInstallPrompt] = useState(null);
   const [busy, setBusy] = useState(false);
   const [flipped, setFlipped] = useState(true);
+  const [trackingEnabled, setTrackingEnabled] = useState(false);
   const activeKeysRef = useRef(new Set());
   const driveConfigRef = useRef({ speed: 50, duration: 400 });
   const driveHoldRef = useRef({ command: null, timerId: null, inFlight: false });
@@ -253,6 +259,8 @@ export default function App() {
   const cameraLastSentAtRef = useRef(0);
   const cameraLastSentTargetRef = useRef(null);
   const cameraSendTimerRef = useRef(null);
+  const trackingEnabledRef = useRef(false);
+  const visionRef = useRef(defaultVision);
   const appConfig = useMemo(() => getAppConfig(), []);
   const cameraBaseUrl = useMemo(
     () => `${window.location.protocol}//${window.location.hostname}:${appConfig.cameraStreamPort}`,
@@ -291,6 +299,9 @@ export default function App() {
       duration: driveDuration,
     };
   }, [driveDuration, driveSpeed]);
+
+  useEffect(() => { visionRef.current = vision; }, [vision]);
+  useEffect(() => { trackingEnabledRef.current = trackingEnabled; }, [trackingEnabled]);
 
   async function refreshStatus() {
     try {
@@ -669,11 +680,41 @@ export default function App() {
   }
 
   async function handleCenterCamera() {
+    setTrackingEnabled(false);
     clearPendingCameraSend();
     cameraPendingRef.current = null;
     cameraLastSentTargetRef.current = null;
     setCameraTargetState(90, 90);
     await sendDirectCommand('center_camera', 'Center Camera');
+  }
+
+  function trackingTick() {
+    if (!trackingEnabledRef.current) return;
+    const v = visionRef.current;
+    if (!v.running || v.detections.length === 0) return;
+
+    // Prefer target-labelled detections; fall back to highest-confidence any.
+    const pool = v.targets.length > 0 ? v.targets : v.detections;
+    const best = pool.reduce((a, b) => (b.confidence > a.confidence ? b : a));
+
+    const cx = best.center?.x ?? (best.box ? best.box.x + best.box.w / 2 : 0.5);
+    const cy = best.center?.y ?? (best.box ? best.box.y + best.box.h / 2 : 0.5);
+    const errorX = cx - 0.5;
+    const errorY = cy - 0.5;
+
+    // Dead-zone: don't move the servo when the target is already centred.
+    if (Math.abs(errorX) < TRACKING_DEAD_ZONE && Math.abs(errorY) < TRACKING_DEAD_ZONE) return;
+
+    const current = cameraTargetRef.current;
+    const nextPan = clamp(
+      Math.round(current.pan + PAN_CLICK_SIGN * errorX * CAMERA_HFOV_DEG * TRACKING_PAN_GAIN),
+      0, 180
+    );
+    const nextTilt = clamp(
+      Math.round(current.tilt + TILT_CLICK_SIGN * errorY * CAMERA_VFOV_DEG * TRACKING_TILT_GAIN),
+      0, 180
+    );
+    scheduleCameraTarget(nextPan, nextTilt, { immediate: true });
   }
 
   function handleCameraAction(item) {
@@ -703,6 +744,7 @@ export default function App() {
   useInterval(refreshSensors, 1500);
   useInterval(refreshFirmwareStatus, FIRMWARE_STATUS_POLL_MS);
   useInterval(refreshVision, VISION_POLL_MS);
+  useInterval(trackingTick, VISION_POLL_MS);
 
   useEffect(() => {
     function onBeforeInstallPrompt(event) {
@@ -950,6 +992,24 @@ export default function App() {
                 <div className="slider-grid compact-slider-grid">
                   <RangeField label="Pan" min={0} max={180} value={pan} onChange={handlePanChange} onCommit={commitCameraTarget} />
                   <RangeField label="Tilt" min={0} max={180} value={tilt} onChange={handleTiltChange} onCommit={commitCameraTarget} />
+                </div>
+                <div className="tracking-bar">
+                  <button
+                    className={`control small track-btn${trackingEnabled ? ' active' : ''}`}
+                    type="button"
+                    onClick={() => setTrackingEnabled((t) => !t)}
+                  >
+                    {trackingEnabled ? 'Tracking ON' : 'Track Target'}
+                  </button>
+                  {trackingEnabled ? (
+                    <span className="status-detail tracking-label">
+                      {vision.targets.length > 0
+                        ? `Locking: ${vision.targets[0].label}`
+                        : vision.detections.length > 0
+                          ? `Locking: ${vision.detections[0].label}`
+                          : 'Searching…'}
+                    </span>
+                  ) : null}
                 </div>
                 <p className="status-detail compact-help">Drag sliders for live target updates. Click video to center a point. Arrows nudge camera.</p>
               </article>
