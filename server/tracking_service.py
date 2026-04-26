@@ -36,6 +36,15 @@ STATUS_NO_FRAME = "no_frame"
 
 _SAMPLE_FPS = 5.0
 
+# Gimbal follow controller tuning
+_PAN_GAIN_DEG = 30.0      # degrees per full-frame error (half-image)
+_TILT_GAIN_DEG = 25.0
+_MAX_STEP_DEG = 8.0       # max degrees moved per control cycle
+_DEADZONE = 0.04          # ignore errors smaller than this fraction of frame
+_SERVO_MIN = 0
+_SERVO_MAX = 180
+_SERVO_CENTER = 90
+
 
 def _clamp_norm(value: float) -> float:
     return max(0.0, min(1.0, float(value)))
@@ -170,12 +179,20 @@ class TrackingService:
         frame_reader: Any | None = None,
         *,
         tracker: Any | None = None,
+        serial_service: Any | None = None,
     ) -> None:
         self._frame_reader = frame_reader
         self._injected_tracker = tracker
+        self._serial_service = serial_service
         self._lock = threading.Lock()
         self._tracker: Any = None
         self._current_label: str = "manual selection"
+        # Follow-mode state
+        self._follow_enabled: bool = False
+        self._pan_invert: bool = True   # camera mounted flipped 180° by default
+        self._tilt_invert: bool = True
+        self._pan_deg: float = float(_SERVO_CENTER)
+        self._tilt_deg: float = float(_SERVO_CENTER)
         self._cache: dict[str, Any] = self._build_idle_cache()
         self._worker: Optional[threading.Thread] = None
         self._stop_event = threading.Event()
@@ -288,6 +305,9 @@ class TrackingService:
                 "last_update_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "fps": 0.0,
                 "message": f"Tracking {label}",
+                "follow_enabled": self._follow_enabled,
+                "pan": round(self._pan_deg, 1),
+                "tilt": round(self._tilt_deg, 1),
             }
 
         self._stop_event.clear()
@@ -310,6 +330,66 @@ class TrackingService:
         """Alias for stop_tracking."""
         return self.stop_tracking()
 
+    def set_follow(
+        self,
+        enabled: bool,
+        *,
+        pan_invert: Optional[bool] = None,
+        tilt_invert: Optional[bool] = None,
+    ) -> dict[str, Any]:
+        """Enable or disable gimbal follow mode.
+
+        When enabled and the tracker reports a valid box, the worker loop
+        proportionally adjusts the camera pan/tilt servos to keep the box
+        centred. When disabled, no servo commands are sent.
+
+        Optional ``pan_invert``/``tilt_invert`` flip the control sign on each
+        axis — useful when the camera is mounted upside down or rotated.
+        """
+        with self._lock:
+            self._follow_enabled = bool(enabled)
+            if pan_invert is not None:
+                self._pan_invert = bool(pan_invert)
+            if tilt_invert is not None:
+                self._tilt_invert = bool(tilt_invert)
+            self._cache["follow_enabled"] = self._follow_enabled
+            self._cache["pan"] = round(self._pan_deg, 1)
+            self._cache["tilt"] = round(self._tilt_deg, 1)
+        if not enabled:
+            # When turning off, recentre nothing — leave servos where they are.
+            LOGGER.info("Gimbal follow disabled")
+        else:
+            LOGGER.info(
+                "Gimbal follow enabled (pan_invert=%s, tilt_invert=%s)",
+                self._pan_invert, self._tilt_invert,
+            )
+        return {"ok": True, "follow_enabled": self._follow_enabled}
+
+    def _follow_step(self, box: dict[str, float]) -> Optional[tuple[int, int]]:
+        """Compute the next (pan, tilt) servo target from a tracking box.
+
+        Returns ``None`` when the error is inside the deadzone (no command
+        needed). Updates internal pan/tilt state in-place.
+        """
+        cx = box["x"] + box["w"] / 2.0
+        cy = box["y"] + box["h"] / 2.0
+        err_x = cx - 0.5
+        err_y = cy - 0.5
+        if abs(err_x) < _DEADZONE and abs(err_y) < _DEADZONE:
+            return None
+        # Proportional step, clamped
+        sign_x = -1.0 if self._pan_invert else 1.0
+        sign_y = -1.0 if self._tilt_invert else 1.0
+        delta_pan = max(-_MAX_STEP_DEG, min(_MAX_STEP_DEG, sign_x * _PAN_GAIN_DEG * err_x))
+        delta_tilt = max(-_MAX_STEP_DEG, min(_MAX_STEP_DEG, sign_y * _TILT_GAIN_DEG * err_y))
+        new_pan = max(_SERVO_MIN, min(_SERVO_MAX, self._pan_deg + delta_pan))
+        new_tilt = max(_SERVO_MIN, min(_SERVO_MAX, self._tilt_deg + delta_tilt))
+        if int(round(new_pan)) == int(round(self._pan_deg)) and int(round(new_tilt)) == int(round(self._tilt_deg)):
+            return None
+        self._pan_deg = new_pan
+        self._tilt_deg = new_tilt
+        return (int(round(new_pan)), int(round(new_tilt)))
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -325,6 +405,9 @@ class TrackingService:
             "last_update_time": None,
             "fps": 0.0,
             "message": "No tracking active. Select an area on the camera feed to begin.",
+            "follow_enabled": getattr(self, "_follow_enabled", False),
+            "pan": round(getattr(self, "_pan_deg", float(_SERVO_CENTER)), 1),
+            "tilt": round(getattr(self, "_tilt_deg", float(_SERVO_CENTER)), 1),
         }
 
     def _update_cache(self, **kwargs: Any) -> None:
@@ -420,5 +503,22 @@ class TrackingService:
                 )
                 if new_fps is not None:
                     self._cache["fps"] = new_fps
+                # Run gimbal follow controller while still holding the lock
+                # (modifies self._pan_deg/_tilt_deg).
+                follow_command: Optional[tuple[int, int]] = None
+                if self._follow_enabled and self._serial_service is not None:
+                    follow_command = self._follow_step(norm_box)
+                self._cache["pan"] = round(self._pan_deg, 1)
+                self._cache["tilt"] = round(self._tilt_deg, 1)
+                self._cache["follow_enabled"] = self._follow_enabled
+
+            # Send servo command outside the lock so a slow serial write does
+            # not block status reads.
+            if follow_command is not None:
+                pan_deg, tilt_deg = follow_command
+                try:
+                    self._serial_service.send_command(f"CAMERANOW {pan_deg} {tilt_deg}")
+                except Exception as exc:  # pragma: no cover - serial failures shouldn't crash worker
+                    LOGGER.warning("Gimbal follow send failed: %s", exc)
 
             self._stop_event.wait(sample_interval)

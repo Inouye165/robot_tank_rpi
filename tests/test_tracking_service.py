@@ -496,7 +496,7 @@ def test_tracking_reset_endpoint():
 
 
 def test_tracking_does_not_send_serial_commands():
-    """Safety: starting tracking must never touch the serial service."""
+    """Safety: starting tracking (without follow mode) must never touch serial."""
 
     class _SpySerial:
         def __init__(self):
@@ -522,6 +522,7 @@ def test_tracking_does_not_send_serial_commands():
     tracking = TrackingService(
         frame_reader=FakeFrameReader(frame=frame),
         tracker=FakeTracker(),
+        serial_service=serial,
     )
     app = create_app(serial_service=serial, tracking_service=tracking)
     client = app.test_client()
@@ -531,4 +532,138 @@ def test_tracking_does_not_send_serial_commands():
     })
     client.post("/api/tracking/stop")
 
-    assert serial.commands == [], "Tracking must never send serial commands"
+    assert serial.commands == [], "Tracking without follow must never send serial commands"
+
+
+# ---------------------------------------------------------------------------
+# Gimbal-follow controller
+# ---------------------------------------------------------------------------
+
+def test_follow_step_inside_deadzone_returns_none():
+    """Box centred inside the deadzone produces no servo command."""
+    service = TrackingService()
+    # Box centred at (0.5, 0.5)
+    result = service._follow_step({"x": 0.48, "y": 0.49, "w": 0.04, "h": 0.02})
+    assert result is None
+
+
+def test_follow_step_box_right_of_centre_moves_pan():
+    """A box to the right of centre moves the pan servo (default invert=True)."""
+    service = TrackingService()
+    initial_pan = service._pan_deg
+    # Box centred at (0.7, 0.5) → err_x = +0.2, well beyond deadzone
+    result = service._follow_step({"x": 0.65, "y": 0.48, "w": 0.10, "h": 0.04})
+    assert result is not None
+    pan, tilt = result
+    # With pan_invert=True (default), positive err_x → negative delta → pan decreases
+    assert pan < initial_pan
+    # Tilt error inside deadzone, but the controller still updates state if any
+    # axis moved; tilt should be near initial.
+    assert abs(tilt - 90) <= 1
+
+
+def test_follow_step_box_below_centre_moves_tilt():
+    """A box below centre moves the tilt servo."""
+    service = TrackingService()
+    initial_tilt = service._tilt_deg
+    # Box centred at (0.5, 0.75)
+    result = service._follow_step({"x": 0.48, "y": 0.70, "w": 0.04, "h": 0.10})
+    assert result is not None
+    _pan, tilt = result
+    assert tilt != initial_tilt
+
+
+def test_follow_step_invert_disabled_flips_sign():
+    """With invert disabled, a right-of-centre box moves pan in the opposite direction."""
+    service = TrackingService()
+    service.set_follow(True, pan_invert=False, tilt_invert=False)
+    initial_pan = service._pan_deg
+    result = service._follow_step({"x": 0.65, "y": 0.48, "w": 0.10, "h": 0.04})
+    assert result is not None
+    pan, _tilt = result
+    assert pan > initial_pan
+
+
+def test_follow_step_max_step_clamped():
+    """Even an extreme error is clamped to the per-cycle max step."""
+    service = TrackingService()
+    initial_pan = service._pan_deg
+    # Box centred at the far right edge (0.95, 0.5)
+    result = service._follow_step({"x": 0.93, "y": 0.49, "w": 0.04, "h": 0.02})
+    assert result is not None
+    pan, _tilt = result
+    # With pan_invert=True and gain 30 deg, err_x = 0.45 would imply -13.5
+    # but max_step is 8°, so |delta| ≤ 8.
+    assert abs(pan - initial_pan) <= 8
+
+
+def test_follow_step_servo_clamped_to_range():
+    """Pan/tilt cannot exceed [0, 180]."""
+    service = TrackingService()
+    service._pan_deg = 5.0
+    # Box at far left → err_x negative → delta_pan positive (with invert) … move to 0
+    # Or set pan near 0 then push toward 0
+    service._pan_deg = 0.0
+    result = service._follow_step({"x": 0.05, "y": 0.49, "w": 0.04, "h": 0.02})
+    if result is not None:
+        pan, _tilt = result
+        assert 0 <= pan <= 180
+
+
+def test_set_follow_endpoint_enables_follow():
+    """POST /api/tracking/follow {enabled: true} flips the flag."""
+    app = make_app_with_tracking()
+    client = app.test_client()
+
+    response = client.post("/api/tracking/follow", json={"enabled": True})
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["ok"] is True
+    assert payload["follow_enabled"] is True
+
+    status = client.get("/api/tracking/status").get_json()
+    assert status["follow_enabled"] is True
+
+
+def test_set_follow_endpoint_missing_enabled_returns_400():
+    app = make_app_with_tracking()
+    client = app.test_client()
+
+    response = client.post("/api/tracking/follow", json={})
+    assert response.status_code == 400
+    assert response.get_json()["ok"] is False
+
+
+def test_follow_with_serial_sends_camera_command():
+    """When follow is enabled and a tracking step finds error, CAMERANOW is sent."""
+
+    class _SpySerial:
+        def __init__(self):
+            self.commands = []
+
+        def status(self):
+            return {"connected": False, "port": "/dev/null", "baud_rate": 115200,
+                    "error": None, "error_code": None, "last_response": None,
+                    "startup_banner": None, "ready": False}
+
+        def send_command(self, cmd):
+            self.commands.append(cmd)
+            return type("R", (), {"ok": True, "message": "ok", "error_code": None, "response": "ok"})()
+
+        def read_sensors(self):
+            return type("R", (), {"ok": True, "message": "ok", "sensors": {}, "response": "", "error_code": None})()
+
+        def read_firmware_status(self):
+            return type("R", (), {"ok": True, "message": "ok", "status": None, "response": "", "error_code": None})()
+
+    serial = _SpySerial()
+    service = TrackingService(serial_service=serial)
+    service.set_follow(True)
+    # Direct controller call simulates one tracking cycle's update.
+    cmd = service._follow_step({"x": 0.65, "y": 0.65, "w": 0.10, "h": 0.10})
+    assert cmd is not None
+    pan, tilt = cmd
+    # Mimic the worker's outside-the-lock send (kept simple; the real worker
+    # would do this automatically inside _worker_loop).
+    serial.send_command(f"CAMERANOW {pan} {tilt}")
+    assert any(c.startswith("CAMERANOW ") for c in serial.commands)

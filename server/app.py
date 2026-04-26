@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import socket
-from typing import Optional
+from typing import Any, Optional
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
 
@@ -183,6 +183,7 @@ def create_app(
     vision_svc = app.config["VISION_SERVICE"]
     app.config["TRACKING_SERVICE"] = tracking_service or TrackingService(
         frame_reader=vision_svc.frame_reader,
+        serial_service=app.config["SERIAL_SERVICE"],
     )
     app.config["STARTUP_ISSUES"] = []
 
@@ -275,6 +276,21 @@ def create_app(
     def tracking_reset():
         service = app.config["TRACKING_SERVICE"]
         result = service.reset()
+        return jsonify(result)
+
+    @app.post("/api/tracking/follow")
+    def tracking_follow():
+        payload = request.get_json(silent=True) or {}
+        if "enabled" not in payload:
+            return jsonify({"ok": False, "error": "Missing 'enabled' field"}), 400
+        enabled = bool(payload.get("enabled"))
+        kwargs: dict[str, Any] = {}
+        if "pan_invert" in payload:
+            kwargs["pan_invert"] = bool(payload["pan_invert"])
+        if "tilt_invert" in payload:
+            kwargs["tilt_invert"] = bool(payload["tilt_invert"])
+        service = app.config["TRACKING_SERVICE"]
+        result = service.set_follow(enabled, **kwargs)
         return jsonify(result)
 
     @app.post("/api/command")

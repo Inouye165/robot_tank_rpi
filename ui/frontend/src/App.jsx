@@ -93,6 +93,9 @@ const defaultRoiTracking = {
   last_update_time: null,
   fps: 0,
   message: 'No tracking active. Select an area on the camera feed to begin.',
+  follow_enabled: false,
+  pan: 90,
+  tilt: 90,
 };
 
 const commandButtons = [
@@ -457,6 +460,9 @@ export default function App() {
         last_update_time: payload.last_update_time ?? null,
         fps: Number.isFinite(payload.fps) ? payload.fps : 0,
         message: payload.message ?? defaultRoiTracking.message,
+        follow_enabled: Boolean(payload.follow_enabled),
+        pan: Number.isFinite(payload.pan) ? payload.pan : 90,
+        tilt: Number.isFinite(payload.tilt) ? payload.tilt : 90,
       });
     } catch {
       // Tracking poll failing silently is acceptable; UI keeps last known state.
@@ -473,6 +479,22 @@ export default function App() {
     setRoiDrag(null);
     roiDragRef.current = null;
     setRoiTracking(defaultRoiTracking);
+  }
+
+  async function toggleRoiFollow() {
+    const next = !roiTracking.follow_enabled;
+    // Optimistic UI update
+    setRoiTracking((current) => ({ ...current, follow_enabled: next }));
+    try {
+      await fetch('/api/tracking/follow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      await refreshRoiTracking();
+    } catch {
+      // best-effort; refresh will reconcile state
+    }
   }
 
   function handleRoiMouseDown(event) {
@@ -1202,6 +1224,16 @@ export default function App() {
                       onClick={stopRoiTracking}
                     >
                       Stop tracking
+                    </button>
+                  ) : null}
+                  {roiTracking.status === 'tracking' ? (
+                    <button
+                      className={`control small${roiTracking.follow_enabled ? ' active' : ''}`}
+                      type="button"
+                      onClick={toggleRoiFollow}
+                      title="Move the camera gimbal to keep the tracked area centered"
+                    >
+                      {roiTracking.follow_enabled ? 'Following ON' : 'Follow with gimbal'}
                     </button>
                   ) : null}
                   {roiTracking.status === 'tracking' ? (

@@ -460,17 +460,43 @@ When the tracker loses the target it reports `status: "lost"` and clears the box
 
 **Safety**
 
-- Monitor-only. Tracking output is display-only.
-- The backend never sends serial or drive commands from tracking.
+- Default behaviour is monitor-only: tracking output is display-only.
+- The backend never sends serial or drive commands from tracking unless
+  the user explicitly enables **Follow with gimbal** (see below).
+- Even with follow enabled, only the camera pan/tilt servos move. The
+  drive wheels are never controlled by tracking.
 - The tank does not move autonomously.
 - People and dogs are not navigation targets.
 
+**Follow with gimbal (opt-in)**
+
+Once a tracking session is active, click **Follow with gimbal** in the
+Turret panel to enable a closed-loop controller that pans/tilts the
+camera servos to keep the tracked box centred. Click again to stop.
+
+The controller:
+
+- Computes the box centre's offset from the frame centre each tick.
+- Inside a small deadzone it does nothing (prevents jitter).
+- Outside the deadzone it issues `CAMERANOW <pan> <tilt>` commands,
+  bounded to small per-tick steps so the gimbal never lurches.
+- Only runs while `status` is `tracking`. When the tracker reports
+  `lost` or you stop tracking, no further servo commands are sent.
+
+If your camera is mounted upside-down or rotated, the default sign is
+correct (the cockpit's **Flip Cam** matches the typical inverted mount).
+If you find the gimbal moves the wrong way on either axis, send
+`{"enabled": true, "pan_invert": false}` and/or `"tilt_invert": false`
+to `POST /api/tracking/follow`.
+
 **API**
 
-- `GET /api/tracking/status` — current tracking state
+- `GET /api/tracking/status` — current tracking state (now includes
+  `follow_enabled`, `pan`, `tilt`)
 - `POST /api/tracking/start` — `{"box": {"x": …, "y": …, "w": …, "h": …}, "label": "manual selection"}` with normalised 0–1 coords
 - `POST /api/tracking/stop` — stop and reset
 - `POST /api/tracking/reset` — alias for stop
+- `POST /api/tracking/follow` — `{"enabled": true|false, "pan_invert"?: bool, "tilt_invert"?: bool}`
 
 Status payload shape:
 
