@@ -535,6 +535,10 @@ describe('ROI tracking UI', () => {
 
     await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
 
+    // Disable camera flip so drag coords map 1:1 to source image space in this test
+    const flipBtn = screen.getByRole('button', { name: /flip cam/i });
+    fireEvent.click(flipBtn); // toggle off (default is flipped=true)
+
     fireEvent.click(await screen.findByRole('button', { name: 'Track area' }));
 
     const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
@@ -560,6 +564,42 @@ describe('ROI tracking UI', () => {
     expect(body.box.x).toBeLessThanOrEqual(1);
     expect(body.box.w).toBeGreaterThan(0);
     expect(body.box.h).toBeGreaterThan(0);
+  });
+
+  it('inverts drag coords when camera is flipped', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByAltText('Robot tank wide camera stream')).toBeTruthy());
+
+    // Camera starts flipped=true (default). Drag at container (0.1,0.2)→(0.3,0.4).
+    // containerBox = {x:0.1, y:0.2, w:0.2, h:0.2}
+    // Flipped inversion → {x:0.7, y:0.6, w:0.2, h:0.2}
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Track area' }));
+
+    const frame = screen.getByAltText('Robot tank wide camera stream').parentElement;
+    frame.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 1000, height: 1000, right: 1000, bottom: 1000,
+    });
+
+    // Drag from (100,200) to (300,400) → container box x=0.1,y=0.2,w=0.2,h=0.2
+    fireEvent.mouseDown(frame, { clientX: 100, clientY: 200 });
+    fireEvent.mouseMove(document, { clientX: 300, clientY: 400 });
+    fireEvent.mouseUp(document, { clientX: 300, clientY: 400 });
+
+    await waitFor(() => {
+      const trackingCalls = calls.filter((c) => c.url.endsWith('/api/tracking/start'));
+      expect(trackingCalls.length).toBeGreaterThanOrEqual(1);
+    });
+
+    const startCall = calls.find((c) => c.url.endsWith('/api/tracking/start'));
+    const body = JSON.parse(startCall.init.body);
+    // After flip inversion: x ≈ 0.7, y ≈ 0.6 (before letterbox unproject)
+    // The source aspect (16/9) vs container (1/1) will apply letterbox, but
+    // the x value should be > 0.5 (right side), confirming inversion happened.
+    expect(body.box.x).toBeGreaterThan(0.5);
+    expect(body.box.y).toBeGreaterThan(0.5);
   });
 
   it('renders the tracking box SVG when tracking is active', async () => {

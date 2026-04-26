@@ -531,8 +531,20 @@ export default function App() {
       containerBox.w < 0.01 || containerBox.h < 0.01
     ) return;
 
+    // When the camera is displayed rotated 180° (flipped), the user's drag is
+    // in visually-flipped container space. Invert before converting to source
+    // image coords so the backend receives the correct region.
+    const containerBoxForSource = flippedRef.current
+      ? {
+          x: 1 - containerBox.x - containerBox.w,
+          y: 1 - containerBox.y - containerBox.h,
+          w: containerBox.w,
+          h: containerBox.h,
+        }
+      : containerBox;
+
     // Invert letterbox to get source-image normalised coords
-    const sourceBox = unprojectNormalizedBox(containerBox, {
+    const sourceBox = unprojectNormalizedBox(containerBoxForSource, {
       sourceAspect: DEFAULT_SOURCE_ASPECT,
       containerAspect: roiContainerAspectRef.current,
     });
