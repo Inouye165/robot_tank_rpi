@@ -13,7 +13,22 @@ function makeJsonResponse(payload, ok = true) {
   };
 }
 
-function installFetchMock() {
+function installFetchMock(options = {}) {
+  const visionPayload = options.visionPayload || {
+    enabled: false,
+    running: false,
+    source_url: 'http://127.0.0.1:8081/stream.mjpg',
+    model_backend: 'disabled',
+    model_path: null,
+    last_frame_time: null,
+    fps: 0,
+    detections: [],
+    people_count: 0,
+    dog_count: 0,
+    hazards: [],
+    targets: [],
+    message: 'Vision monitoring disabled. Monitor-only mode is standing by.',
+  };
   const calls = [];
   const mock = vi.fn(async (input, init = {}) => {
     const url = typeof input === 'string' ? input : input.toString();
@@ -60,6 +75,10 @@ function installFetchMock() {
         tilt: 90,
         target_tilt: 100,
       });
+    }
+
+    if (url.endsWith('/api/vision/detections')) {
+      return makeJsonResponse(visionPayload);
     }
 
     if (url.endsWith('/status')) {
@@ -113,7 +132,7 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
     calls.length = 0;
 
     fireEvent.change(screen.getByLabelText('Pan'), { target: { value: '120' } });
@@ -157,7 +176,7 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
     calls.length = 0;
 
     fireEvent.click(screen.getByRole('button', { name: 'Center' }));
@@ -179,7 +198,7 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
     calls.length = 0;
 
     fireEvent.keyDown(window, { key: 'ArrowRight' });
@@ -194,7 +213,7 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
     calls.length = 0;
 
     const forwardButton = screen.getByRole('button', { name: /forward/i });
@@ -223,7 +242,7 @@ describe('App camera controls', () => {
     const { calls } = installFetchMock();
     render(<App />);
 
-    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(4));
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
     calls.length = 0;
 
     fireEvent.keyDown(window, { key: 's' });
@@ -247,5 +266,103 @@ describe('App camera controls', () => {
     expect(screen.getByText('Built: Apr 18 2026 07:55:42')).toBeTruthy();
     expect(screen.getByText('Date: Apr 18 2026')).toBeTruthy();
     expect(screen.getByText('Time: 07:55:42')).toBeTruthy();
+  });
+
+  it('renders a calm disabled vision status', async () => {
+    installFetchMock();
+    render(<App />);
+
+    expect(await screen.findByText('Vision')).toBeTruthy();
+    expect(screen.getByText('Vision disabled')).toBeTruthy();
+    expect(screen.getByText('Monitor only')).toBeTruthy();
+    expect(screen.getByText('Vision monitoring disabled. Monitor-only mode is standing by.')).toBeTruthy();
+  });
+
+  it('shows vision counts and overlay boxes from normalized detections', async () => {
+    installFetchMock({
+      visionPayload: {
+        enabled: true,
+        running: true,
+        source_url: 'http://127.0.0.1:8081/stream.mjpg',
+        model_backend: 'opencv_onnx',
+        model_path: 'models/yolo-nano.onnx',
+        last_frame_time: '2026-04-26T15:30:00Z',
+        fps: 2,
+        detections: [
+          {
+            label: 'person',
+            confidence: 0.91,
+            box: { x: 0.1, y: 0.2, w: 0.2, h: 0.45 },
+            center: { x: 0.2, y: 0.425 },
+            category: 'person',
+            is_hazard: false,
+            is_target: true,
+          },
+          {
+            label: 'chair',
+            confidence: 0.74,
+            box: { x: 0.48, y: 0.63, w: 0.16, h: 0.2 },
+            center: { x: 0.56, y: 0.73 },
+            category: 'hazard',
+            is_hazard: true,
+            is_target: false,
+          },
+          {
+            label: 'tennis ball',
+            confidence: 0.69,
+            box: { x: 0.72, y: 0.44, w: 0.08, h: 0.08 },
+            center: { x: 0.76, y: 0.48 },
+            category: 'target',
+            is_hazard: false,
+            is_target: true,
+          },
+        ],
+        people_count: 1,
+        dog_count: 0,
+        hazards: [
+          {
+            label: 'chair',
+            confidence: 0.74,
+            box: { x: 0.48, y: 0.63, w: 0.16, h: 0.2 },
+            center: { x: 0.56, y: 0.73 },
+            category: 'hazard',
+            is_hazard: true,
+            is_target: false,
+          },
+        ],
+        targets: [
+          {
+            label: 'person',
+            confidence: 0.91,
+            box: { x: 0.1, y: 0.2, w: 0.2, h: 0.45 },
+            center: { x: 0.2, y: 0.425 },
+            category: 'person',
+            is_hazard: false,
+            is_target: true,
+          },
+          {
+            label: 'tennis ball',
+            confidence: 0.69,
+            box: { x: 0.72, y: 0.44, w: 0.08, h: 0.08 },
+            center: { x: 0.76, y: 0.48 },
+            category: 'target',
+            is_hazard: false,
+            is_target: true,
+          },
+        ],
+        message: 'Vision monitoring active in monitor-only mode.',
+      },
+    });
+    render(<App />);
+
+    expect(await screen.findByText('Vision active')).toBeTruthy();
+    expect(screen.getByText('Backend: opencv_onnx')).toBeTruthy();
+    expect(screen.getByText('People: 1')).toBeTruthy();
+    expect(screen.getByText('Hazards: 1')).toBeTruthy();
+    expect(screen.getByText('Targets: 2')).toBeTruthy();
+    expect(screen.getByLabelText('Vision overlay')).toBeTruthy();
+    expect(screen.getByTestId('vision-box-0')).toBeTruthy();
+    expect(screen.getByTestId('vision-box-1')).toBeTruthy();
+    expect(screen.getByTestId('vision-box-2')).toBeTruthy();
   });
 });

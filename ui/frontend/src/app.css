@@ -170,6 +170,70 @@ h2 {
   inset: 0;
 }
 
+.vision-overlay-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.vision-detection rect,
+.vision-detection circle {
+  fill: none;
+  stroke-width: 0.006;
+}
+
+.vision-detection text {
+  font-size: 0.038px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  paint-order: stroke;
+  stroke: rgba(4, 10, 18, 0.88);
+  stroke-width: 0.01;
+}
+
+.vision-detection.tone-person rect,
+.vision-detection.tone-person circle,
+.vision-detection.tone-person text {
+  stroke: #6cc5ff;
+  fill: rgba(108, 197, 255, 0.12);
+  color: #d5f2ff;
+}
+
+.vision-detection.tone-dog rect,
+.vision-detection.tone-dog circle,
+.vision-detection.tone-dog text {
+  stroke: #ffd166;
+  fill: rgba(255, 209, 102, 0.12);
+  color: #fff3c4;
+}
+
+.vision-detection.tone-hazard rect,
+.vision-detection.tone-hazard circle,
+.vision-detection.tone-hazard text {
+  stroke: #f95f62;
+  fill: rgba(249, 95, 98, 0.12);
+  color: #ffd6d7;
+}
+
+.vision-detection.tone-target rect,
+.vision-detection.tone-target circle,
+.vision-detection.tone-target text {
+  stroke: #13b0a5;
+  fill: rgba(19, 176, 165, 0.12);
+  color: #c9fff8;
+}
+
+.vision-detection.tone-object rect,
+.vision-detection.tone-object circle,
+.vision-detection.tone-object text {
+  stroke: #c2c9d4;
+  fill: rgba(194, 201, 212, 0.1);
+  color: #eef2f6;
+}
+
 .camera-stream {
   display: block;
   width: 100%;
@@ -243,6 +307,10 @@ h2 {
 
 .detail-grid-overlay {
   gap: 0.2rem;
+}
+
+.vision-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .status-detail,

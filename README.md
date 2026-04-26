@@ -63,6 +63,15 @@ The app reads configuration from environment variables.
 - `TANK_CAMERA_SENSOR_WIDTH` default: `4608`
 - `TANK_CAMERA_SENSOR_HEIGHT` default: `2592`
 - `TANK_CAMERA_STREAM_PORT` default: `8081`
+- `TANK_VISION_ENABLED` default: `false`
+- `TANK_VISION_SOURCE_URL` default: `http://127.0.0.1:${TANK_CAMERA_STREAM_PORT}/stream.mjpg`
+- `TANK_VISION_MODEL_PATH` default: unset
+- `TANK_VISION_MODEL_BACKEND` default: `disabled`
+- `TANK_VISION_SAMPLE_FPS` default: `2`
+- `TANK_VISION_CONFIDENCE` default: `0.45`
+- `TANK_VISION_FRAME_WIDTH` default: `640`
+- `TANK_VISION_TARGET_LABELS` default: `person,dog`
+- `TANK_VISION_HAZARD_LABELS` default: `chair,backpack,suitcase,bottle,box,cup,sports ball,potted plant,traffic cone,unknown obstacle`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
 - `TANK_SERIAL_WRITE_TIMEOUT` default: `1.0`
@@ -114,6 +123,47 @@ http://<pi-ip>:5000/
 ```
 
 The live camera stream is served separately on `http://<pi-ip>:8081/stream.mjpg` and is embedded into the main page automatically.
+
+## Vision monitoring
+
+This phase adds monitor-only vision monitoring to the Pi-side cockpit. It watches the existing primary MJPEG stream instead of opening the Pi camera directly, classifies candidate detections into people, dogs, hazards, targets, and generic objects, and exposes the latest snapshot through:
+
+- `GET /api/vision/status`
+- `GET /api/vision/detections`
+
+The cockpit overlays normalized boxes on the main camera view and shows counts for people, dogs, hazards, and target candidates.
+
+Safety boundary for this phase:
+
+- vision is monitor-only
+- detections do not send drive commands
+- detections do not chase targets
+- the existing `Stop` control remains manual and unchanged
+
+Vision defaults to disabled. When disabled, or when no model/backend is configured, the API returns a calm status payload instead of crashing.
+
+Suggested model placement:
+
+- `models/yolo-nano.onnx`
+
+Do not commit large model files to this repo. Place them on the Pi locally and point `TANK_VISION_MODEL_PATH` at the file you want to test.
+
+Recommended vision settings for this phase:
+
+- keep `TANK_VISION_SAMPLE_FPS=2` on Raspberry Pi 5 CPU mode for low-FPS monitoring
+- treat hazard marking as a heuristic only; it is based on lower-frame obstacle-like detections, not true floor understanding
+- use accelerator hardware such as Raspberry Pi AI HAT+ later if you want real-time object detection beyond lightweight monitoring
+
+Example configuration:
+
+```bash
+export TANK_VISION_ENABLED=true
+export TANK_VISION_MODEL_BACKEND=opencv_onnx
+export TANK_VISION_MODEL_PATH=$PWD/models/yolo-nano.onnx
+export TANK_VISION_TARGET_LABELS=person,dog,tennis ball
+```
+
+If OpenCV/model support is not installed, leave `TANK_VISION_MODEL_BACKEND=disabled` and the cockpit will stay in monitor-only standby.
 
 Find the Pi IP with:
 
@@ -216,6 +266,7 @@ The web UI exposes:
 source .venv/bin/activate
 ruff check .
 npm run build
+npm run test:frontend
 python3 -m pytest
 ```
 
