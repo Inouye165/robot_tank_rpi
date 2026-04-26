@@ -68,6 +68,9 @@ class Config:
             "tennis ball,traffic cone,marker",
         )
     )
+    vision_source_aspect: float = field(
+        default_factory=lambda: _float_env("TANK_VISION_SOURCE_ASPECT", 16.0 / 9.0)
+    )
     vision_hazard_labels: str = field(
         default_factory=lambda: _str_env(
             "TANK_VISION_HAZARD_LABELS",

@@ -11,3 +11,9 @@ htmlcov/
 *.log
 .DS_Store
 node_modules/
+
+# Local YOLO/ONNX model files for the optional vision backend.
+# Keep the models/ directory and its README/gitkeep but ignore weights.
+models/*
+!models/README.md
+!models/.gitkeep

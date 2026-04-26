@@ -66,11 +66,16 @@ const defaultVision = {
   enabled: false,
   running: false,
   source_url: null,
+  backend: 'disabled',
   model_backend: 'disabled',
   model_path: null,
+  model_loaded: false,
+  stream_connected: false,
   last_frame_time: null,
+  last_detection_time: null,
   fps: 0,
   detections: [],
+  detections_count: 0,
   people_count: 0,
   dog_count: 0,
   hazards: [],
@@ -157,11 +162,17 @@ function visionLevel(vision) {
   if (!vision.enabled) {
     return { label: 'Vision disabled', tone: 'pending' };
   }
+  if (vision.model_backend === 'disabled') {
+    return { label: 'Vision standby', tone: 'pending' };
+  }
+  if (!vision.model_path || !vision.model_loaded) {
+    return { label: 'Vision model missing', tone: 'warning' };
+  }
+  if (!vision.stream_connected) {
+    return { label: 'Vision waiting for stream', tone: 'warning' };
+  }
   if (vision.running) {
     return { label: 'Vision active', tone: 'ok' };
-  }
-  if (vision.model_backend === 'disabled' || !vision.model_path) {
-    return { label: 'Vision standby', tone: 'pending' };
   }
   return { label: 'Vision waiting', tone: 'warning' };
 }
@@ -370,11 +381,18 @@ export default function App() {
         enabled: Boolean(payload.enabled),
         running: Boolean(payload.running),
         source_url: payload.source_url ?? null,
-        model_backend: payload.model_backend ?? 'disabled',
+        backend: payload.backend ?? payload.model_backend ?? 'disabled',
+        model_backend: payload.model_backend ?? payload.backend ?? 'disabled',
         model_path: payload.model_path ?? null,
+        model_loaded: Boolean(payload.model_loaded),
+        stream_connected: Boolean(payload.stream_connected),
         last_frame_time: payload.last_frame_time ?? null,
+        last_detection_time: payload.last_detection_time ?? null,
         fps: Number.isFinite(payload.fps) ? payload.fps : Number(payload.fps || 0),
         detections: Array.isArray(payload.detections) ? payload.detections : [],
+        detections_count: Number.isFinite(payload.detections_count)
+          ? payload.detections_count
+          : Array.isArray(payload.detections) ? payload.detections.length : 0,
         people_count: payload.people_count ?? 0,
         dog_count: payload.dog_count ?? 0,
         hazards: Array.isArray(payload.hazards) ? payload.hazards : [],

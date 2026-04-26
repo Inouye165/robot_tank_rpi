@@ -75,6 +75,7 @@ The app reads configuration from environment variables.
 - `TANK_VISION_CONFIDENCE` default: `0.45`
 - `TANK_VISION_FRAME_WIDTH` default: `640`
 - `TANK_VISION_TARGET_LABELS` default: `tennis ball,traffic cone,marker` (monitor-only safety: people/dogs are detected and counted but are NOT target candidates by default)
+- `TANK_VISION_SOURCE_ASPECT` default: `1.7777777778` (16/9; used by the overlay geometry helper to letterbox-correct boxes)
 - `TANK_VISION_HAZARD_LABELS` default: `chair,backpack,suitcase,bottle,box,cup,sports ball,potted plant,traffic cone,unknown obstacle`
 - `TANK_SERIAL_PORT` default: `/dev/ttyACM0`
 - `TANK_SERIAL_BAUD` default: `115200`
@@ -180,6 +181,79 @@ export TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
 ```
 
 If OpenCV/model support is not installed, leave `TANK_VISION_MODEL_BACKEND=disabled` and the cockpit will stay in monitor-only standby.
+
+### Real vision backend (`opencv_onnx`)
+
+The optional OpenCV ONNX backend wires a real YOLO-style detector to the
+existing monitor-only pipeline. It is still **monitor-only**: detections do
+not send drive commands and the `Stop` controls remain manual and
+prominent.
+
+How it works:
+
+- A long-lived `MjpegFrameReader` opens **one** connection to the wide
+  camera stream (`http://127.0.0.1:8081/stream.mjpg`) and caches the
+  latest decoded frame.
+- The vision worker samples that cached frame at `TANK_VISION_SAMPLE_FPS`
+  and runs `OpenCvOnnxDetector.detect_frame(...)` on it. The MJPEG stream
+  is **not** reopened every loop.
+- Detections are classified into people, dogs, hazards, targets, and
+  generic objects using the existing rules. People and dogs are still
+  **not** target candidates by default (see `TANK_VISION_TARGET_LABELS`).
+
+Install the optional dependencies (or just the headless OpenCV wheel):
+
+```bash
+pip install opencv-python-headless numpy
+```
+
+Place a COCO-trained ONNX YOLO model on the Pi locally. The repository
+ships an empty `models/` directory and a `models/README.md`; weights are
+gitignored. For example:
+
+```bash
+mkdir -p models
+# copy your local file
+cp ~/Downloads/yolo-nano.onnx models/yolo-nano.onnx
+```
+
+Example environment to enable the backend:
+
+```bash
+export TANK_VISION_ENABLED=true
+export TANK_VISION_MODEL_BACKEND=opencv_onnx
+export TANK_VISION_MODEL_PATH=$PWD/models/yolo-nano.onnx
+export TANK_VISION_SOURCE_URL=http://127.0.0.1:8081/stream.mjpg
+export TANK_VISION_SAMPLE_FPS=2
+export TANK_VISION_CONFIDENCE=0.45
+export TANK_VISION_FRAME_WIDTH=640
+# Safe markers only by default. Add person/dog ONLY if you understand the
+# implications; this phase is still monitor-only and does not act on targets.
+export TANK_VISION_TARGET_LABELS=tennis ball,traffic cone,marker
+```
+
+This phase is **CPU-only first** and is expected to be **low FPS** on the
+Pi (1–3 FPS depending on the model). Use accelerator hardware such as the
+Raspberry Pi AI HAT+ later if you want real-time detection.
+
+Manual test steps:
+
+1. Confirm the wide camera stream is up:
+   `curl -I http://<pi-ip>:8081/stream.mjpg` should return `200 OK`.
+2. Open the cockpit at `http://<pi-ip>:5000/`.
+3. Hit `http://<pi-ip>:5000/api/vision/status` and confirm
+   `enabled=true`, `model_loaded=true`, `stream_connected=true`.
+4. Hit `http://<pi-ip>:5000/api/vision/detections` and confirm the
+   `detections` array is populated when something COCO-known is in view.
+5. In the browser, the Wide Cam viewport should overlay coloured boxes on
+   detected objects. The Vision pill should read **Vision active**.
+6. If the pill reads **Vision model missing**, the ONNX file path is
+   wrong or OpenCV is not installed. If it reads **Vision waiting for
+   stream**, the MJPEG stream is unreachable — check the camera service.
+
+Failure modes are intentionally calm: missing OpenCV, missing model file,
+or unreachable stream all leave the cockpit responsive with a clear
+status message instead of crashing.
 
 Find the Pi IP with:
 

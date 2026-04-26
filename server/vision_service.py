@@ -34,9 +34,15 @@ class DetectionCandidate:
 
 
 class VisionService:
-    def __init__(self, config: Config, detector: Any | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        detector: Any | None = None,
+        frame_reader: Any | None = None,
+    ) -> None:
         self._config = config
         self._detector = detector
+        self._frame_reader = frame_reader
         self._lock = Lock()
         self._stop_event = Event()
         self._worker: Thread | None = None
@@ -56,12 +62,19 @@ class VisionService:
         return {
             "enabled": enabled,
             "running": False,
-            "source_url": self._source_url,
+            "backend": model_backend,
+            # `model_backend` is preserved for backwards compatibility with
+            # existing clients/tests; `backend` is the future-ready alias.
             "model_backend": model_backend,
             "model_path": model_path,
+            "model_loaded": self._detector_model_loaded(),
+            "source_url": self._source_url,
+            "stream_connected": self._frame_reader.connected if self._frame_reader is not None else False,
             "last_frame_time": None,
+            "last_detection_time": None,
             "fps": 0.0,
             "detections": [],
+            "detections_count": 0,
             "people_count": 0,
             "dog_count": 0,
             "hazards": [],
@@ -76,7 +89,14 @@ class VisionService:
             return "Vision monitoring enabled, but model backend is disabled. No detections will run."
         if not model_path:
             return "Vision monitoring enabled, but no model path is configured."
+        if not self._detector_model_loaded():
+            return "Vision monitoring enabled, but the model could not be loaded (model missing or OpenCV unavailable)."
         return "Vision monitoring ready."
+
+    def _detector_model_loaded(self) -> bool:
+        if self._detector is None:
+            return False
+        return bool(getattr(self._detector, "model_loaded", True))
 
     def _start_if_configured(self) -> None:
         if not self._config.vision_enabled:
@@ -86,10 +106,47 @@ class VisionService:
         if not self._config.vision_model_path:
             return
 
+        # Auto-construct the OpenCV ONNX detector + MJPEG frame reader when
+        # the operator selected the opencv_onnx backend and did not pass
+        # explicit collaborators. This keeps tests free to inject fakes.
+        if self._detector is None and self._config.vision_model_backend == "opencv_onnx":
+            try:
+                from .detectors import OpenCvOnnxDetector
+
+                self._detector = OpenCvOnnxDetector(
+                    self._config.vision_model_path,
+                    input_size=self._config.vision_frame_width,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.warning("Failed to construct OpenCvOnnxDetector: %s", exc)
+                self._detector = None
+
+        if self._frame_reader is None and self._detector is not None:
+            try:
+                from .frame_reader import MjpegFrameReader
+
+                self._frame_reader = MjpegFrameReader(self._source_url)
+                self._frame_reader.start()
+            except Exception as exc:  # pragma: no cover - defensive
+                LOGGER.warning("Failed to construct MjpegFrameReader: %s", exc)
+                self._frame_reader = None
+
+        # Refresh the initial status fields now that collaborators may exist.
+        with self._lock:
+            self._cache["model_loaded"] = self._detector_model_loaded()
+            self._cache["stream_connected"] = (
+                self._frame_reader.connected if self._frame_reader is not None else False
+            )
+            self._cache["message"] = self._status_message(
+                enabled=self._config.vision_enabled,
+                model_backend=self._config.vision_model_backend or "disabled",
+                model_path=self._config.vision_model_path or None,
+            )
+
         self._worker = Thread(target=self._worker_loop, name="tank-vision", daemon=True)
         self._worker.start()
 
-    def _worker_loop(self) -> None:
+    def _worker_loop(self) -> None:  # pragma: no cover - exercised via integration
         with self._lock:
             self._cache["running"] = True
             self._cache["message"] = "Vision monitoring worker started in monitor-only mode."
@@ -106,32 +163,61 @@ class VisionService:
                 return
 
             try:
-                # NOTE: passing `source_url` per call is TEMPORARY. The future
-                # shape splits a frame reader (which owns the MJPEG
-                # connection) from a detector (which consumes already-decoded
-                # frames), so detectors stop reopening the stream every loop.
-                # See docs/FUTURE_IMPROVEMENTS.md and server/detectors.py.
-                raw_detections = self._detector.detect(
-                    source_url=self._source_url,
-                    confidence=self._config.vision_confidence,
-                    frame_width=self._config.vision_frame_width,
-                )
+                raw_detections = self._detect_once()
                 self.update_from_candidates(raw_detections)
                 failure_count = 0
-            except Exception as exc:  # pragma: no cover - exercised via integration/runtime only
+            except Exception as exc:
                 failure_count += 1
                 if failure_count <= 3 or failure_count % 10 == 0:
-                    LOGGER.warning("Vision worker could not read detections from %s: %s", self._source_url, exc)
+                    LOGGER.warning("Vision worker iteration failed: %s", exc)
                 with self._lock:
-                    self._cache["running"] = False
-                    self._cache["message"] = f"Vision stream unavailable: {exc}"
+                    self._cache["stream_connected"] = (
+                        self._frame_reader.connected if self._frame_reader is not None else False
+                    )
+                    self._cache["message"] = f"Vision pipeline error: {exc}"
 
             self._stop_event.wait(sample_interval)
+
+    def _detect_once(self) -> list[dict[str, Any]]:
+        """Run one detection pass.
+
+        Prefers the future-ready frame-reader + ``detect_frame`` path. Falls
+        back to the legacy ``detect(source_url=...)`` shape for older
+        adapters that have not been migrated yet.
+        """
+        if self._frame_reader is not None and hasattr(self._detector, "detect_frame"):
+            frame, frame_time = self._frame_reader.latest_frame()
+            with self._lock:
+                self._cache["stream_connected"] = self._frame_reader.connected
+                if frame_time is not None:
+                    self._cache["last_frame_time"] = time.strftime(
+                        "%Y-%m-%dT%H:%M:%SZ", time.gmtime()
+                    )
+            if frame is None:
+                return []
+            return list(
+                self._detector.detect_frame(
+                    frame, confidence=self._config.vision_confidence
+                )
+            )
+        # Legacy adapter path (kept for backwards compatibility).
+        return list(
+            self._detector.detect(
+                source_url=self._source_url,
+                confidence=self._config.vision_confidence,
+                frame_width=self._config.vision_frame_width,
+            )
+        )
 
     def stop(self) -> None:
         self._stop_event.set()
         if self._worker is not None:
             self._worker.join(timeout=1.0)
+        if self._frame_reader is not None:
+            try:
+                self._frame_reader.stop()
+            except Exception:  # pragma: no cover - defensive
+                pass
 
     def get_status(self) -> dict[str, Any]:
         with self._lock:
@@ -189,9 +275,15 @@ class VisionService:
             self._cache.update(
                 {
                     "running": self._detector is not None,
+                    "model_loaded": self._detector_model_loaded(),
+                    "stream_connected": (
+                        self._frame_reader.connected if self._frame_reader is not None else False
+                    ),
                     "last_frame_time": now,
+                    "last_detection_time": now,
                     "fps": float(self._config.vision_sample_fps),
                     "detections": classified,
+                    "detections_count": len(classified),
                     "people_count": people_count,
                     "dog_count": dog_count,
                     "hazards": hazards,
