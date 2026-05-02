@@ -702,3 +702,334 @@ describe('ROI tracking UI', () => {
     expect(trackingCalls).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Gamepad controller tests
+// ---------------------------------------------------------------------------
+describe('Gamepad controller', () => {
+  // Capture RAF callbacks so tests can drive the poll loop manually.
+  let storedRafCallback = null;
+  let rafIdCounter = 0;
+
+  function flushRaf() {
+    const cb = storedRafCallback;
+    storedRafCallback = null;
+    if (cb) cb(performance.now());
+  }
+
+  function makeGamepad(overrides = {}) {
+    return {
+      index: 0,
+      id: 'Xbox Wireless Controller',
+      connected: true,
+      axes: [0, 0, 0, 0],
+      buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })),
+      ...overrides,
+    };
+  }
+
+  function connectGamepad(gp) {
+    const event = Object.assign(new Event('gamepadconnected'), { gamepad: gp });
+    act(() => { window.dispatchEvent(event); });
+  }
+
+  function disconnectGamepad(gp) {
+    const event = Object.assign(new Event('gamepaddisconnected'), { gamepad: gp });
+    act(() => { window.dispatchEvent(event); });
+  }
+
+  beforeEach(() => {
+    window.__TANK_APP_CONFIG__ = { cameraStreamPort: 8081, secondaryCameraStreamPort: 8082 };
+
+    // Stub RAF so the poll loop only advances when flushRaf() is called.
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      storedRafCallback = cb;
+      return ++rafIdCounter;
+    });
+    vi.spyOn(window, 'cancelAnimationFrame').mockImplementation(() => {});
+
+    // Stub getGamepads so the hook can read the fake gamepad state.
+    Object.defineProperty(window.navigator, 'getGamepads', {
+      configurable: true,
+      value: vi.fn(() => []),
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    delete window.__TANK_APP_CONFIG__;
+    storedRafCallback = null;
+  });
+
+  // -----------------------------------------------------------------------
+  // Status indicator
+  // -----------------------------------------------------------------------
+
+  it('shows "Controller: disconnected" by default', async () => {
+    installFetchMock();
+    render(<App />);
+
+    expect(await screen.findByText('Controller: disconnected')).toBeTruthy();
+  });
+
+  it('shows the controller name when a gamepad connects', async () => {
+    installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(screen.getByText('Controller: disconnected')).toBeTruthy());
+
+    const gp = makeGamepad();
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    expect(await screen.findByText('Xbox Wireless Controller')).toBeTruthy();
+  });
+
+  it('reverts to "Controller: disconnected" after disconnect', async () => {
+    installFetchMock();
+    render(<App />);
+
+    const gp = makeGamepad();
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await waitFor(() => expect(screen.getByText('Xbox Wireless Controller')).toBeTruthy());
+
+    disconnectGamepad(gp);
+
+    expect(await screen.findByText('Controller: disconnected')).toBeTruthy();
+  });
+
+  // -----------------------------------------------------------------------
+  // Button actions
+  // -----------------------------------------------------------------------
+
+  it('A button sends a stop command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    // A button (index 0) pressed
+    const gp = makeGamepad({
+      buttons: Array.from({ length: 17 }, (_, i) => ({ pressed: i === 0, value: i === 0 ? 1 : 0 })),
+    });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(commandCalls(calls).some((c) => c.command === 'stop')).toBe(true));
+  });
+
+  // -----------------------------------------------------------------------
+  // Drive commands
+  // -----------------------------------------------------------------------
+
+  it('left stick forward sends a forward command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    const gp = makeGamepad({ axes: [0, -0.9, 0, 0] }); // left stick up = forward
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'forward')).toBe(true),
+    );
+  });
+
+  it('left stick backward sends a backward command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    const gp = makeGamepad({ axes: [0, 0.9, 0, 0] }); // left stick down = backward
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'backward')).toBe(true),
+    );
+  });
+
+  // -----------------------------------------------------------------------
+  // Dead zone
+  // -----------------------------------------------------------------------
+
+  it('stick input within the dead zone does not send a drive command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    // Axis value 0.1 is below the 0.18 dead zone
+    const gp = makeGamepad({ axes: [0, -0.1, 0, 0] });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+
+    // Small delay to confirm no command arrives
+    await act(async () => {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    });
+
+    expect(commandCalls(calls).filter((c) => c.command === 'forward')).toHaveLength(0);
+    expect(commandCalls(calls).filter((c) => c.command === 'backward')).toHaveLength(0);
+  });
+
+  // -----------------------------------------------------------------------
+  // Throttling
+  // -----------------------------------------------------------------------
+
+  it('repeated stick input within the throttle window sends only one command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    const gp = makeGamepad({ axes: [0, -0.9, 0, 0] });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    // Flush RAF multiple times in rapid succession (same Date.now() ms).
+    await act(async () => {
+      flushRaf(); // first tick — sends command, records timestamp
+      flushRaf(); // second tick — same ms, throttled
+      flushRaf(); // third tick — same ms, throttled
+      await Promise.resolve();
+    });
+
+    const fwdCalls = commandCalls(calls).filter((c) => c.command === 'forward');
+    expect(fwdCalls).toHaveLength(1);
+  });
+
+  // -----------------------------------------------------------------------
+  // Camera movement
+  // -----------------------------------------------------------------------
+
+  it('right stick movement sends a camera command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+    calls.length = 0;
+
+    const gp = makeGamepad({ axes: [0, 0, 0.8, 0] }); // right stick right = pan
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'camera')).toBe(true),
+    );
+  });
+
+  // -----------------------------------------------------------------------
+  // Safety: stop on disconnect / blur / visibility change
+  // -----------------------------------------------------------------------
+
+  it('disconnect sends a stop command', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+
+    const gp = makeGamepad({ axes: [0, -0.9, 0, 0] });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    // Drive forward for one tick so the hook is in active drive state
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+    calls.length = 0;
+
+    disconnectGamepad(gp);
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'stop')).toBe(true),
+    );
+  });
+
+  it('window blur sends a stop command while the controller is connected', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+
+    const gp = makeGamepad({ axes: [0, -0.9, 0, 0] });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+    calls.length = 0;
+
+    act(() => { window.dispatchEvent(new Event('blur')); });
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'stop')).toBe(true),
+    );
+  });
+
+  it('page hidden sends a stop command while the controller is connected', async () => {
+    const { calls } = installFetchMock();
+    render(<App />);
+
+    await waitFor(() => expect(calls.length).toBeGreaterThanOrEqual(5));
+
+    const gp = makeGamepad({ axes: [0, -0.9, 0, 0] });
+    window.navigator.getGamepads.mockReturnValue([gp]);
+    connectGamepad(gp);
+
+    await act(async () => {
+      flushRaf();
+      await Promise.resolve();
+    });
+    calls.length = 0;
+
+    // Simulate tab becoming hidden
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true });
+    act(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true });
+
+    await waitFor(() =>
+      expect(commandCalls(calls).some((c) => c.command === 'stop')).toBe(true),
+    );
+  });
+});

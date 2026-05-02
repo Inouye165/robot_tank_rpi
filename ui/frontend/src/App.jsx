@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox, unprojectNormalizedBox } from './visionGeometry';
+import { useGamepadControls } from './useGamepadControls';
 
 const SERIAL_ERROR_HELP = {
   'serial-port-missing': 'Serial port missing. Check the USB cable and TANK_SERIAL_PORT.',
@@ -315,6 +316,32 @@ export default function App() {
   const hazardCount = formatVisionCount(vision.hazards);
   const targetCount = formatVisionCount(vision.targets);
   const visionLastSeen = formatVisionTime(vision.last_frame_time);
+
+  // Gamepad callbacks are plain closures — the hook wraps them in a ref so the
+  // RAF poll loop always calls the latest version without stale captures.
+  const { connected: gamepadConnected, name: gamepadName } = useGamepadControls({
+    onForward:  () => { void sendDirectCommand('forward',  'Gamepad Forward',  driveHoldPayload()); },
+    onBackward: () => { void sendDirectCommand('backward', 'Gamepad Backward', driveHoldPayload()); },
+    onPivotLeft: () => {
+      const { speed, duration } = driveConfigRef.current;
+      void postCommand('left_motor',  { speed: -speed, duration_ms: duration });
+      void postCommand('right_motor', { speed,          duration_ms: duration });
+    },
+    onPivotRight: () => {
+      const { speed, duration } = driveConfigRef.current;
+      void postCommand('left_motor',  { speed,          duration_ms: duration });
+      void postCommand('right_motor', { speed: -speed,  duration_ms: duration });
+    },
+    onStop: () => { void sendDirectCommand('stop', 'Gamepad Stop'); },
+    onCameraMove: (rightX, rightY) => {
+      const nextPan  = clamp(Math.round(cameraTargetRef.current.pan  + rightX * CAMERA_NUDGE_DEG), 0, 180);
+      const nextTilt = clamp(Math.round(cameraTargetRef.current.tilt + rightY * CAMERA_NUDGE_DEG), 0, 180);
+      scheduleCameraTarget(nextPan, nextTilt, { immediate: true });
+    },
+    onCenterCamera: () => { void handleCenterCamera(); },
+    onSpeedDown: () => setDriveSpeed((v) => clamp(v - 5, 0, 255)),
+    onSpeedUp:   () => setDriveSpeed((v) => clamp(v + 5, 0, 255)),
+  });
 
   useEffect(() => {
     driveConfigRef.current = {
@@ -1138,6 +1165,12 @@ export default function App() {
           <section className="command-deck">
             <article className="subpanel drive-cluster wide-panel">
               <HeaderActions title="Drive" actions={commandButtons} disabled={busy} onAction={(item) => sendCommand(item.command, item.label)} />
+              <p className="status-detail compact-help">
+                <StatusPill
+                  label={gamepadConnected ? (gamepadName || 'Controller: connected') : 'Controller: disconnected'}
+                  tone={gamepadConnected ? 'ok' : 'pending'}
+                />
+              </p>
               <div className="drive-pad">
                 <div className="pad-spacer" />
                 <button
