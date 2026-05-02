@@ -320,22 +320,17 @@ export default function App() {
   // Gamepad callbacks are plain closures — the hook wraps them in a ref so the
   // RAF poll loop always calls the latest version without stale captures.
   const { connected: gamepadConnected, name: gamepadName } = useGamepadControls({
-    onForward:  () => { void sendDirectCommand('forward',  'Gamepad Forward',  driveHoldPayload()); },
-    onBackward: () => { void sendDirectCommand('backward', 'Gamepad Backward', driveHoldPayload()); },
-    onPivotLeft: () => {
-      const { speed, duration } = driveConfigRef.current;
-      void postCommand('left_motor',  { speed: -speed, duration_ms: duration });
-      void postCommand('right_motor', { speed,          duration_ms: duration });
-    },
-    onPivotRight: () => {
-      const { speed, duration } = driveConfigRef.current;
-      void postCommand('left_motor',  { speed,          duration_ms: duration });
-      void postCommand('right_motor', { speed: -speed,  duration_ms: duration });
+    // onDrive receives tank-mixed { left, right } speeds from the hook's analog math.
+    onDrive: ({ left, right }) => {
+      const dur = Math.max(driveConfigRef.current.duration, 80);
+      void postCommand('left_motor',  { speed: left,  duration_ms: dur });
+      void postCommand('right_motor', { speed: right, duration_ms: dur });
     },
     onStop: () => { void sendDirectCommand('stop', 'Gamepad Stop'); },
-    onCameraMove: (rightX, rightY) => {
-      const nextPan  = clamp(Math.round(cameraTargetRef.current.pan  + rightX * CAMERA_NUDGE_DEG), 0, 180);
-      const nextTilt = clamp(Math.round(cameraTargetRef.current.tilt + rightY * CAMERA_NUDGE_DEG), 0, 180);
+    // onCameraMove receives pre-curved degree steps from the hook.
+    onCameraMove: (panStep, tiltStep) => {
+      const nextPan  = clamp(Math.round(cameraTargetRef.current.pan  + panStep),  0, 180);
+      const nextTilt = clamp(Math.round(cameraTargetRef.current.tilt + tiltStep), 0, 180);
       scheduleCameraTarget(nextPan, nextTilt, { immediate: true });
     },
     onCenterCamera: () => { void handleCenterCamera(); },
@@ -1166,10 +1161,7 @@ export default function App() {
             <article className="subpanel drive-cluster wide-panel">
               <HeaderActions title="Drive" actions={commandButtons} disabled={busy} onAction={(item) => sendCommand(item.command, item.label)} />
               <p className="status-detail compact-help">
-                <StatusPill
-                  label={gamepadConnected ? (gamepadName || 'Controller: connected') : 'Controller: disconnected'}
-                  tone={gamepadConnected ? 'ok' : 'pending'}
-                />
+                <GamepadIndicator connected={gamepadConnected} name={gamepadName} />
               </p>
               <div className="drive-pad">
                 <div className="pad-spacer" />
@@ -1371,6 +1363,41 @@ export default function App() {
 
 function StatusPill({ label, tone }) {
   return <span className={`status-pill status-${tone}`}>{label}</span>;
+}
+
+/**
+ * Small gamepad icon + status text.
+ * When connected the icon is accent-coloured; when disconnected it is muted.
+ */
+function GamepadIndicator({ connected, name }) {
+  const title = connected
+    ? `${name || 'Controller'} connected`
+    : 'Controller disconnected';
+
+  return (
+    <span
+      className={`status-pill status-${connected ? 'ok' : 'pending'}`}
+      title={title}
+      aria-label={title}
+      data-testid="gamepad-indicator"
+    >
+      {/* Minimal inline gamepad SVG — no external dependency */}
+      <svg
+        width="14"
+        height="10"
+        viewBox="0 0 14 10"
+        aria-hidden="true"
+        style={{ verticalAlign: 'middle', marginRight: '4px', opacity: connected ? 1 : 0.45 }}
+      >
+        <rect x="1" y="2" width="12" height="6" rx="3" ry="3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        <line x1="3.5" y1="5" x2="5.5" y2="5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <line x1="4.5" y1="4" x2="4.5" y2="6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <circle cx="9.5" cy="5" r="0.8" fill="currentColor" />
+        <circle cx="11" cy="4" r="0.8" fill="currentColor" />
+      </svg>
+      {connected ? (name || 'Controller: connected') : 'Controller: disconnected'}
+    </span>
+  );
 }
 
 function DetailCard({ children }) {
