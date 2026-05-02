@@ -45,6 +45,20 @@ if [[ -x "${repo_dir}/.venv/bin/python3" ]]; then
 try:
     import cv2  # type: ignore
     print(f"cv2 OK: {cv2.__version__}")
+    # Check whether contrib tracker APIs are present
+    apis = {
+        "TrackerCSRT_create":          getattr(cv2, "TrackerCSRT_create", None),
+        "TrackerKCF_create":           getattr(cv2, "TrackerKCF_create", None),
+        "legacy.TrackerCSRT_create":   getattr(getattr(cv2, "legacy", None), "TrackerCSRT_create", None),
+        "legacy.TrackerKCF_create":    getattr(getattr(cv2, "legacy", None), "TrackerKCF_create", None),
+    }
+    found = [k for k, v in apis.items() if v is not None]
+    if found:
+        print("  tracker APIs: " + ", ".join(found))
+    else:
+        print("  tracker APIs: NONE FOUND — install opencv-contrib-python-headless for ROI tracking")
+        print("    pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless")
+        print("    pip install opencv-contrib-python-headless numpy")
 except Exception as exc:  # pragma: no cover - operator diagnostic
     print(f"cv2 import FAILED: {exc}")
 PY

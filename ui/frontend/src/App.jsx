@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { DEFAULT_SOURCE_ASPECT, projectNormalizedBox, unprojectNormalizedBox } from './visionGeometry';
+import { useGamepadControls } from './useGamepadControls';
 
 const SERIAL_ERROR_HELP = {
   'serial-port-missing': 'Serial port missing. Check the USB cable and TANK_SERIAL_PORT.',
@@ -93,6 +94,9 @@ const defaultRoiTracking = {
   last_update_time: null,
   fps: 0,
   message: 'No tracking active. Select an area on the camera feed to begin.',
+  follow_enabled: false,
+  pan: 90,
+  tilt: 90,
 };
 
 const commandButtons = [
@@ -313,6 +317,27 @@ export default function App() {
   const targetCount = formatVisionCount(vision.targets);
   const visionLastSeen = formatVisionTime(vision.last_frame_time);
 
+  // Gamepad callbacks are plain closures — the hook wraps them in a ref so the
+  // RAF poll loop always calls the latest version without stale captures.
+  const { connected: gamepadConnected, name: gamepadName } = useGamepadControls({
+    // onDrive receives tank-mixed { left, right } speeds from the hook's analog math.
+    onDrive: ({ left, right }) => {
+      const dur = Math.max(driveConfigRef.current.duration, 80);
+      void postCommand('left_motor',  { speed: left,  duration_ms: dur });
+      void postCommand('right_motor', { speed: right, duration_ms: dur });
+    },
+    onStop: () => { void sendDirectCommand('stop', 'Gamepad Stop'); },
+    // onCameraMove receives pre-curved degree steps from the hook.
+    onCameraMove: (panStep, tiltStep) => {
+      const nextPan  = clamp(Math.round(cameraTargetRef.current.pan  + panStep),  0, 180);
+      const nextTilt = clamp(Math.round(cameraTargetRef.current.tilt + tiltStep), 0, 180);
+      scheduleCameraTarget(nextPan, nextTilt, { immediate: true });
+    },
+    onCenterCamera: () => { void handleCenterCamera(); },
+    onSpeedDown: () => setDriveSpeed((v) => clamp(v - 5, 0, 255)),
+    onSpeedUp:   () => setDriveSpeed((v) => clamp(v + 5, 0, 255)),
+  });
+
   useEffect(() => {
     driveConfigRef.current = {
       speed: driveSpeed,
@@ -457,6 +482,9 @@ export default function App() {
         last_update_time: payload.last_update_time ?? null,
         fps: Number.isFinite(payload.fps) ? payload.fps : 0,
         message: payload.message ?? defaultRoiTracking.message,
+        follow_enabled: Boolean(payload.follow_enabled),
+        pan: Number.isFinite(payload.pan) ? payload.pan : 90,
+        tilt: Number.isFinite(payload.tilt) ? payload.tilt : 90,
       });
     } catch {
       // Tracking poll failing silently is acceptable; UI keeps last known state.
@@ -473,6 +501,22 @@ export default function App() {
     setRoiDrag(null);
     roiDragRef.current = null;
     setRoiTracking(defaultRoiTracking);
+  }
+
+  async function toggleRoiFollow() {
+    const next = !roiTracking.follow_enabled;
+    // Optimistic UI update
+    setRoiTracking((current) => ({ ...current, follow_enabled: next }));
+    try {
+      await fetch('/api/tracking/follow', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      });
+      await refreshRoiTracking();
+    } catch {
+      // best-effort; refresh will reconcile state
+    }
   }
 
   function handleRoiMouseDown(event) {
@@ -531,8 +575,20 @@ export default function App() {
       containerBox.w < 0.01 || containerBox.h < 0.01
     ) return;
 
+    // When the camera is displayed rotated 180° (flipped), the user's drag is
+    // in visually-flipped container space. Invert before converting to source
+    // image coords so the backend receives the correct region.
+    const containerBoxForSource = flippedRef.current
+      ? {
+          x: 1 - containerBox.x - containerBox.w,
+          y: 1 - containerBox.y - containerBox.h,
+          w: containerBox.w,
+          h: containerBox.h,
+        }
+      : containerBox;
+
     // Invert letterbox to get source-image normalised coords
-    const sourceBox = unprojectNormalizedBox(containerBox, {
+    const sourceBox = unprojectNormalizedBox(containerBoxForSource, {
       sourceAspect: DEFAULT_SOURCE_ASPECT,
       containerAspect: roiContainerAspectRef.current,
     });
@@ -1104,6 +1160,9 @@ export default function App() {
           <section className="command-deck">
             <article className="subpanel drive-cluster wide-panel">
               <HeaderActions title="Drive" actions={commandButtons} disabled={busy} onAction={(item) => sendCommand(item.command, item.label)} />
+              <p className="status-detail compact-help">
+                <GamepadIndicator connected={gamepadConnected} name={gamepadName} />
+              </p>
               <div className="drive-pad">
                 <div className="pad-spacer" />
                 <button
@@ -1190,6 +1249,16 @@ export default function App() {
                       onClick={stopRoiTracking}
                     >
                       Stop tracking
+                    </button>
+                  ) : null}
+                  {roiTracking.status === 'tracking' ? (
+                    <button
+                      className={`control small${roiTracking.follow_enabled ? ' active' : ''}`}
+                      type="button"
+                      onClick={toggleRoiFollow}
+                      title="Move the camera gimbal to keep the tracked area centered"
+                    >
+                      {roiTracking.follow_enabled ? 'Following ON' : 'Follow with gimbal'}
                     </button>
                   ) : null}
                   {roiTracking.status === 'tracking' ? (
@@ -1294,6 +1363,41 @@ export default function App() {
 
 function StatusPill({ label, tone }) {
   return <span className={`status-pill status-${tone}`}>{label}</span>;
+}
+
+/**
+ * Small gamepad icon + status text.
+ * When connected the icon is accent-coloured; when disconnected it is muted.
+ */
+function GamepadIndicator({ connected, name }) {
+  const title = connected
+    ? `${name || 'Controller'} connected`
+    : 'Controller disconnected';
+
+  return (
+    <span
+      className={`status-pill status-${connected ? 'ok' : 'pending'}`}
+      title={title}
+      aria-label={title}
+      data-testid="gamepad-indicator"
+    >
+      {/* Minimal inline gamepad SVG — no external dependency */}
+      <svg
+        width="14"
+        height="10"
+        viewBox="0 0 14 10"
+        aria-hidden="true"
+        style={{ verticalAlign: 'middle', marginRight: '4px', opacity: connected ? 1 : 0.45 }}
+      >
+        <rect x="1" y="2" width="12" height="6" rx="3" ry="3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        <line x1="3.5" y1="5" x2="5.5" y2="5" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <line x1="4.5" y1="4" x2="4.5" y2="6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+        <circle cx="9.5" cy="5" r="0.8" fill="currentColor" />
+        <circle cx="11" cy="4" r="0.8" fill="currentColor" />
+      </svg>
+      {connected ? (name || 'Controller: connected') : 'Controller: disconnected'}
+    </span>
+  );
 }
 
 function DetailCard({ children }) {

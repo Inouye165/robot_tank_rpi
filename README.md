@@ -460,17 +460,41 @@ When the tracker loses the target it reports `status: "lost"` and clears the box
 
 **Safety**
 
-- Monitor-only. Tracking output is display-only.
-- The backend never sends serial or drive commands from tracking.
+- Default behaviour is monitor-only: tracking output is display-only.
+- The backend never sends serial or drive commands from tracking unless
+  the user explicitly enables **Follow with gimbal** (see below).
+- Even with follow enabled, only the camera pan/tilt servos move. The
+  drive wheels are never controlled by tracking.
 - The tank does not move autonomously.
 - People and dogs are not navigation targets.
 
+**Follow with gimbal (opt-in)**
+
+Once a tracking session is active, click **Follow with gimbal** in the
+Turret panel to enable a closed-loop controller that pans/tilts the
+camera servos to keep the tracked box centred. Click again to stop.
+
+The controller:
+
+- Computes the box centre's offset from the frame centre each tick.
+- Inside a small deadzone it does nothing (prevents jitter).
+- Outside the deadzone it issues `CAMERANOW <pan> <tilt>` commands,
+  bounded to small per-tick steps so the gimbal never lurches.
+- Only runs while `status` is `tracking`. When the tracker reports
+  `lost` or you stop tracking, no further servo commands are sent.
+
+If you find the gimbal moves the wrong way on either axis, send
+`{"enabled": true, "pan_invert": true}` and/or `"tilt_invert": true`
+to `POST /api/tracking/follow`.
+
 **API**
 
-- `GET /api/tracking/status` — current tracking state
+- `GET /api/tracking/status` — current tracking state (now includes
+  `follow_enabled`, `pan`, `tilt`)
 - `POST /api/tracking/start` — `{"box": {"x": …, "y": …, "w": …, "h": …}, "label": "manual selection"}` with normalised 0–1 coords
 - `POST /api/tracking/stop` — stop and reset
 - `POST /api/tracking/reset` — alias for stop
+- `POST /api/tracking/follow` — `{"enabled": true|false, "pan_invert"?: bool, "tilt_invert"?: bool}`
 
 Status payload shape:
 
@@ -488,11 +512,25 @@ Status payload shape:
 }
 ```
 
-`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `no_frame`.
+`status` is one of: `idle`, `tracking`, `lost`, `error`, `opencv_missing`, `tracker_unavailable`, `no_frame`.
 
-**OpenCV optional**
+**OpenCV dependency**
 
-If `opencv-python` or `opencv-python-headless` is not installed, the endpoint returns `status: "opencv_missing"` instead of crashing. Everything else in the cockpit continues to work normally.
+Manual ROI tracking requires the **contrib** OpenCV package, which includes the CSRT/KCF tracker APIs. Plain `opencv-python` or `opencv-python-headless` does **not** include these.
+
+Install the correct package:
+
+```bash
+pip uninstall -y opencv-python opencv-python-headless opencv-contrib-python opencv-contrib-python-headless
+pip install opencv-contrib-python-headless numpy
+```
+
+If `opencv-contrib-python-headless` is not installed:
+
+- `POST /api/tracking/start` returns JSON `{"ok": false, "error": "…"}` with `status: "tracker_unavailable"` — never a 500.
+- Everything else in the cockpit continues to work normally.
+
+You can verify which tracker APIs are present by running `scripts/check_vision_runtime.sh` on the Pi.
 
 
 
